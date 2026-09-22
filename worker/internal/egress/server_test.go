@@ -13,6 +13,33 @@ import (
 	"time"
 )
 
+func TestLoopsToSelf(t *testing.T) {
+	srv := &Server{cfg: Config{ListenTCP: "172.19.0.1:34722", ListenDNS: "172.19.0.1:34723"}}
+	cases := []struct {
+		dest string
+		want bool
+	}{
+		{"172.19.0.1:34722", true},  // own TCP listener
+		{"172.19.0.1:34723", true},  // own DNS listener
+		{"172.19.0.1:443", false},   // same host, other port
+		{"172.19.0.2:34722", false}, // same port, other host
+		{"142.250.80.46:443", false},
+		{"malformed", false},
+	}
+	for _, c := range cases {
+		if got := srv.loopsToSelf(c.dest); got != c.want {
+			t.Errorf("loopsToSelf(%q) = %v, want %v", c.dest, got, c.want)
+		}
+	}
+}
+
+func TestLoopsToSelfWildcardListen(t *testing.T) {
+	srv := &Server{cfg: Config{ListenTCP: ":34722"}}
+	if !srv.loopsToSelf("127.0.0.1:34722") {
+		t.Error("wildcard listen must treat any local address on the port as self")
+	}
+}
+
 func TestForwardTCPThroughSOCKS(t *testing.T) {
 	echo, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
