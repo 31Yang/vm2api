@@ -143,9 +143,39 @@ func (s *Server) handleTCP(ctx context.Context, conn net.Conn) {
 		log.Printf("kin-egress original dest: %v", err)
 		return
 	}
+	if s.loopsToSelf(dest) {
+		log.Printf("kin-egress refuse self-loop dest=%s", dest)
+		return
+	}
 	if err = s.ForwardTCP(ctx, conn, dest); err != nil {
 		log.Printf("kin-egress %v", err)
 	}
+}
+
+// loopsToSelf reports whether dest points back at this egress's own
+// listeners. Forwarding such a connection sends the SOCKS proxy a CONNECT
+// for our listen address; the proxy dialing us back forms a self-sustaining
+// loop that amplifies until FD exhaustion. A single stray TCP connect to the
+// listen address (e.g. the control plane's waitListen probe) seeds it.
+func (s *Server) loopsToSelf(dest string) bool {
+	dhost, dport, err := net.SplitHostPort(dest)
+	if err != nil {
+		return false
+	}
+	for _, listen := range []string{s.cfg.ListenTCP, s.cfg.ListenDNS} {
+		lhost, lport, err := net.SplitHostPort(listen)
+		if err != nil || lport != dport {
+			continue
+		}
+		lip := net.ParseIP(lhost)
+		if lip == nil || lip.IsUnspecified() {
+			return true
+		}
+		if dip := net.ParseIP(dhost); dip != nil && dip.Equal(lip) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) ForwardTCP(ctx context.Context, client net.Conn, dest string) error {
