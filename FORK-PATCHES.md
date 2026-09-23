@@ -9,7 +9,7 @@
 |---|---|
 | 上游 | `upstream` = github.com/dofastted/vm2api |
 | 补丁分支 | `fork-patches`（VPS `/opt/vm2api` 当前 checkout 的分支） |
-| 当前基线 | `v1.3.21`（`fork-patches` = v1.3.21 + 下表补丁） |
+| 当前基线 | `v1.3.28`（`fork-patches` = v1.3.28 + 下表补丁） |
 | 本地对应分支 | `fix/egress-self-loop`（与本机工作区同步用） |
 
 **升级上游新版本的流程：**
@@ -27,7 +27,7 @@
 | commit | `fix/egress-self-loop` 分支 HEAD（VPS `fork-patches` 同名 commit） |
 | 改动文件 | `worker/internal/egress/server.go`、`worker/internal/egress/server_test.go` |
 | 引入日期 | 2026-09-22，基线 v1.3.21 |
-| 状态 | **active**；上游 v1.3.21 未修，建议提 issue/PR |
+| 状态 | **active**；2026-09-23 核对：v1.3.21→v1.3.28 `worker/` 零改动、探测逻辑未变，补丁继续有效，`bin/kin-egress.patched` 无需重编；上游未修，建议提 issue/PR |
 
 **根因**：控制面代理池每 10 分钟探测一次（`src/lib/vm/proxy-pool.mjs` 的 `probe_interval_min: 10`），`egressListening` 的 `waitListen` 会向 kin-egress 监听地址（如 `172.19.0.1:34722`）发起真实 TCP 连接探测存活性。kin-egress 的透明转发对"每个接受的连接"按其 OriginalDst 经 SOCKS5 转发——探测连接的 OriginalDst 就是监听地址本身，于是向 SOCKS 代理（vps-socks）发起 `CONNECT 172.19.0.1:34722`；代理回拨该地址再次被 kin-egress 接受并转发，形成自持放大回路：一条种子连接约 22 秒放大到 7500+ 次 SOCKS 拨号，约 30–60 秒内耗尽代理进程 65535 个 FD（`accept4: too many open files`），vps-socks 崩溃重启；回路随崩溃熄灭，10 分钟后下一次探测重新点燃——表现为 vps-socks 每 ~10 分钟崩溃一次的稳定周期。
 
