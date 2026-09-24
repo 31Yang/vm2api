@@ -55,3 +55,5 @@ cd /opt/vm2api && docker compose restart
 **验证**：`python3 -c "socket.connect_ex(('172.19.0.1',34722))"` 打一条种子连接，同时 `strace -f -e connect -p $(pgrep -f kin-egress.patched)` 观察：补丁前 22 秒约 7600 次对 127.0.0.1:1080 拨号，补丁后 0 次。间接验证：连续 2 个探测周期（20 分钟）`vps-socks` 的 RestartCount 不再增长。
 
 **合并注意**：上游若改了 `server.go` 的 `handleTCP`/`ForwardTCP` 或新增了同类防护（查 `loopsToSelf` / `sameHostPort` / "self-loop" 字样），本补丁整条下线，并删除 `docker-compose.override.yml` 与 `bin/kin-egress.patched` 后 `docker compose up -d` 复原。
+
+注意区分：v1.3.30 #91「px-local 本地出口 direct 化」是控制面 src/ 改动（local 探测短路返回 mode: direct、不再为本地出口启动 kin-egress），与本补丁作用路径互斥，**不构成同类修复**；远程 SOCKS5 路径的 waitListen 真实 TCP 探测与自回路放大风险在 v1.3.44 依然存在（gressListening 对非 local 代理仍走 inspectEgressProcess + waitListen），本补丁继续兜底。
