@@ -278,6 +278,27 @@ const AUTH_ERROR_TEXT =
 // cli-hop can flatten an organization permission denial into generic api_error.
 // Preserve the denial instead of replacing it with an empty-hop error.
 const PERMISSION_ERROR_TEXT = /organization does not have access to claude/i
+// Fork patch (cli-error-semantics): a context-window rejection also arrives as a generic api_error.
+// Left alone it looks like an empty hop (same-account retries, then 502 "incomplete_response"), so
+// clients keep resending the oversized prompt and Claude Code never gets to compact.
+const CONTEXT_OVERFLOW_TEXT =
+  /prompt is too long|prompt_too_long|exceed(?:s|ed)? (?:the )?context (?:limit|window)|context (?:window|length) (?:exceeded|limit)|input is too long/i
+// Fork patch (cli-error-semantics): the wrap CLI turns an upstream stop_reason=max_tokens into this error.
+const OUTPUT_CAP_TEXT = /exceeded the (\d+) output token maximum/i
+
+export function isContextOverflowMessage(message) {
+  return CONTEXT_OVERFLOW_TEXT.test(String(message || ''))
+}
+
+/** Upstream 400 shape; keeps the lowercase phrase Claude Code looks for before compacting. */
+function contextOverflowBody(body, message) {
+  const text = /prompt is too long/.test(message) ? message : `prompt is too long: ${message}`
+  return { type: 'error', error: { ...(body?.error || {}), type: 'invalid_request_error', message: text } }
+}
+
+function streamErrorMessage(event) {
+  return String(event?.error?.message || event?.message || '')
+}
 
 /**
  * The kernel cli-hop answers 200 and then streams `event: error` (sub2api
@@ -295,7 +316,7 @@ export function semanticStatusForStreamError(errorBody) {
   if (type === 'overloaded_error') return 529
   if (type === 'authentication_error' || AUTH_ERROR_TEXT.test(message)) return 401
   if (type === 'permission_error' || PERMISSION_ERROR_TEXT.test(message)) return 403
-  if (type === 'invalid_request_error') return 400
+  if (type === 'invalid_request_error' || isContextOverflowMessage(message)) return 400
   return 502
 }
 
@@ -308,6 +329,10 @@ export function restoreKernelErrorStatus(result = {}, { now = Date.now() } = {})
   const body = result.body
   if (!(body?.type === 'error' || body?.error)) return result
   const status = semanticStatusForStreamError(body)
+  const message = streamErrorMessage(body)
+  if (status === 400 && isContextOverflowMessage(message)) {
+    return { ...result, status: 400, body: contextOverflowBody(body, message), terminalState: 'rejected' }
+  }
   if (status !== 403 && status !== 429 && status !== 529) return result
   const headers =
     status === 429
@@ -345,6 +370,15 @@ export function restoreUncommittedHop(result = {}, { now = Date.now() } = {}) {
     const status = semanticStatusForStreamError(body)
     const message = String(body?.error?.message || body?.message || '')
     const code = String(body?.error?.code || '')
+    if (status === 400 && isContextOverflowMessage(message)) {
+      return {
+        ...result,
+        status,
+        body: contextOverflowBody(body, message),
+        terminalState: 'rejected',
+        streamError: true,
+      }
+    }
     if (code && code !== 'empty_response') {
       const retryAfter = body?.error?.retry_after
       const coded = retryAfter ? { ...(result.headers || {}), 'retry-after': String(retryAfter) } : result.headers
@@ -680,6 +714,7 @@ export async function streamGoWorker({
     let sseRateHeaders = {}
     const assembler = createClaudeMessageAssembler()
     const pendingLines = []
+    const openBlocks = new Set()
     const takeSseEvent = () => {
       try {
         const event = JSON.parse(dataBuf)
@@ -712,6 +747,9 @@ export async function streamGoWorker({
       }
       if (event.type === 'error') lastError = event
       if (event.type === 'message_stop') sawMessageStop = true
+      if (event.type === 'message_start') openBlocks.clear()
+      if (event.type === 'content_block_start' && Number.isInteger(event.index)) openBlocks.add(event.index)
+      if (event.type === 'content_block_stop' && Number.isInteger(event.index)) openBlocks.delete(event.index)
       const evUsage = usageFromSseEvent(event)
       if (evUsage) sseUsage = mergeUsage(sseUsage, evUsage)
       if (event.message?.model) sseModel = event.message.model
@@ -737,6 +775,79 @@ export async function streamGoWorker({
       }, 1000)
       idleTimer.unref?.()
     }
+    const handleLine = async (line) => {
+      applyClaudeSSELineToMessage(line, assembler)
+      if (line.startsWith('data:')) {
+        const piece = line.slice(5).trim()
+        if (piece && piece !== '[DONE]') {
+          dataBuf = dataBuf ? `${dataBuf}\n${piece}` : piece
+          const event = observeSseEvent(takeSseEvent())
+          if (isDownstreamCommitEvent(event)) await flushCommit()
+        }
+        if (ttftMs == null) ttftMs = Date.now() - startedAt
+      } else if (line === '') {
+        if (dataBuf) {
+          const event = takeSseEvent()
+          dataBuf = ''
+          observeSseEvent(event)
+          if (isDownstreamCommitEvent(event)) await flushCommit()
+        }
+      } else if (dataBuf && !line.startsWith('event:') && !line.startsWith(':')) {
+        dataBuf = `${dataBuf}\n${line}`
+        const event = observeSseEvent(takeSseEvent())
+        if (isDownstreamCommitEvent(event)) await flushCommit()
+      }
+      await emitLine(line)
+    }
+    // Fork patch (cli-error-semantics): upstream answers a max_tokens hit with 200 + stop_reason
+    // max_tokens, but the wrap CLI replaces it with a fatal "exceeded the N output token maximum"
+    // error, which clients saw as 502 and resent unchanged. Hold each cli-hop `event:` line until its
+    // data decides, swallow that error, and close the message the way the upstream did.
+    let heldEventLine = null
+    let outputCapClosed = false
+    const injectSseEvent = async (event) => {
+      await handleLine(`event: ${event.type}`)
+      await handleLine(`data: ${JSON.stringify(event)}`)
+      await handleLine('')
+    }
+    const closeAtOutputCap = async (errorEvent) => {
+      outputCapClosed = true
+      if (sawMessageStop) return
+      for (const index of [...openBlocks].sort((a, b) => a - b)) {
+        await injectSseEvent({ type: 'content_block_stop', index })
+      }
+      const cap = Number(OUTPUT_CAP_TEXT.exec(streamErrorMessage(errorEvent))?.[1])
+      await injectSseEvent({
+        type: 'message_delta',
+        delta: { stop_reason: 'max_tokens', stop_sequence: null },
+        ...(cap > 0 ? { usage: { output_tokens: cap } } : {}),
+      })
+      await injectSseEvent({ type: 'message_stop' })
+    }
+    const passLine = async (line) => {
+      if (!cliHop) return handleLine(line)
+      if (line.startsWith('event:')) {
+        if (heldEventLine != null) await handleLine(heldEventLine)
+        heldEventLine = line
+        return
+      }
+      const held = heldEventLine
+      heldEventLine = null
+      if (line.startsWith('data:')) {
+        let event = null
+        try {
+          event = JSON.parse(line.slice(5).trim())
+        } catch {}
+        const type = event && typeof event === 'object' ? String(event.type || '') : ''
+        // Terminal events the kernel may still send after the swallowed error would close twice.
+        if (outputCapClosed && (type === 'error' || type === 'message_delta' || type === 'message_stop')) return
+        if (!outputCapClosed && type === 'error' && OUTPUT_CAP_TEXT.test(streamErrorMessage(event))) {
+          return closeAtOutputCap(event)
+        }
+      }
+      if (held != null) await handleLine(held)
+      return handleLine(line)
+    }
     try {
       // message_stop is the protocol terminal event, but the kernel still sends
       // job_done and its trailers afterward. Keep reading until the worker
@@ -749,29 +860,12 @@ export async function streamGoWorker({
         while ((newline = buffer.indexOf('\n')) >= 0) {
           const line = buffer.slice(0, newline).replace(/\r$/, '')
           buffer = buffer.slice(newline + 1)
-          applyClaudeSSELineToMessage(line, assembler)
-          if (line.startsWith('data:')) {
-            const piece = line.slice(5).trim()
-            if (piece && piece !== '[DONE]') {
-              dataBuf = dataBuf ? `${dataBuf}\n${piece}` : piece
-              const event = observeSseEvent(takeSseEvent())
-              if (isDownstreamCommitEvent(event)) await flushCommit()
-            }
-            if (ttftMs == null) ttftMs = Date.now() - startedAt
-          } else if (line === '') {
-            if (dataBuf) {
-              const event = takeSseEvent()
-              dataBuf = ''
-              observeSseEvent(event)
-              if (isDownstreamCommitEvent(event)) await flushCommit()
-            }
-          } else if (dataBuf && !line.startsWith('event:') && !line.startsWith(':')) {
-            dataBuf = `${dataBuf}\n${line}`
-            const event = observeSseEvent(takeSseEvent())
-            if (isDownstreamCommitEvent(event)) await flushCommit()
-          }
-          await emitLine(line)
+          await passLine(line)
         }
+      }
+      if (heldEventLine != null) {
+        await handleLine(heldEventLine)
+        heldEventLine = null
       }
       if (buffer) {
         applyClaudeSSELineToMessage(buffer, assembler)
