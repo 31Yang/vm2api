@@ -114,24 +114,51 @@ cd /opt/vm2api && docker compose restart
 
 ---
 
-## 补丁 4：CLI 错误语义——撞 max_tokens 回 200、上游超长回 400（开发中）
+## 补丁 4：CLI 错误语义——撞 max_tokens 回 200、上游超长回 400（待部署）
 
 | 项 | 值 |
 |---|---|
+| commit | `fork-patches` 分支 `fix(transport): cli-hop output-cap stop and context-overflow 400` |
+| 改动文件 | `src/lib/transport/go-worker-client.mjs`、`test/unit/go-worker-client.test.mjs` |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **开发中** |
+| 状态 | **待部署**（Linux 容器单测通过）；不提 PR，自维护 |
 
 **动机（部署指南 §13 B/D 类）**：
 - D：槽内 CLI 把 `stop_reason=max_tokens` 当致命错误（「Claude's response exceeded the N output token maximum」），vm2api 回 502 `upstream_error`；官方 API 语义是 200 + `stop_reason: max_tokens` + 已生成内容。客户端收到 502 只会原样重试、再烧一遍输出额度。
 - B：上游因超出上下文窗口秒拒时，vm2api 当成空 hop、同号重试后回 502 `incomplete_response`（面板归「超时」），客户端拿不到 prompt too long 信号，Claude Code 的自动压缩不会触发（线上单会话被原样重试 168 次）。
 
+
+**改动**：
+- D（撞上限）：`streamGoWorker` **仅对 cli-hop** 生效——暂存每个 `event:` 行，等它的 `data:` 行决定去留；识别到「exceeded the N output token maximum」错误时吞掉该错误，按上游真实语义收尾：给仍打开的内容块补 `content_block_stop`，再补 `message_delta{stop_reason: max_tokens, usage.output_tokens: N}` 和 `message_stop`，之后丢弃内核可能跟来的 error / message_delta / message_stop。结果变成 200 成功（OpenAI 客户端得到 `finish_reason: length`），usage 记 N 个输出 token（原先只记 message_start 的 0–9 个）。被截断的 tool_use 其 input 退化为 `{}`（与上游截断语义一致，客户端应按 max_tokens 处理）。非 cli-hop 路径（Codex 内核等）与其他错误一律不变。
+- B（超长）：`semanticStatusForStreamError` 识别上下文超长文本（prompt is too long / exceed context limit 等）→ 400；`restoreUncommittedHop`、`restoreKernelErrorStatus` 遇到这类错误改写为 `invalid_request_error`，并确保消息含小写 `prompt is too long`（Claude Code 据此触发自动压缩）。上游错误策略把 400 归为请求级 `invalid_request`：立即停止、不重试、不冷却账号。
+
+**风险 / 未实证**：内核转发 CLI 错误时的实际 SSE 形态（是否先发 message_delta / message_stop、错误是否带 code）、以及超长时 CLI 输出的原文，都没有线上抓包。补丁对多种形态做了防御（内核已发 message_stop 时只吞错误、不重复收尾）；超长正则不匹配时退回原行为（无害）。
+
+**验证**：本机 Docker Linux 容器（`node:22-bookworm-slim`）`node --test test/unit/go-worker-client.test.mjs` 30/30（新增 7 条：超长状态映射、未提交超长→400、cli-hop 撞上限→max_tokens、未闭合 tool_use 先补 stop、内核已发 message_stop 不重复、非 cli-hop 与其他错误行为不变、流式超长→400），errors-map 21、upstream-error-policy 44、failover-runner 38、error-class 4 全过。部署后受控验证：① haiku（thinking 关闭）`max_tokens=1100` 让它写长文 → 应 200 + `stop_reason: max_tokens`（OpenAI 渠道 `finish_reason: length`）；② sonnet-4-6 灌 >200K token 纯文本 → 应 400 且消息含 prompt is too long。若 ② 仍是 502 `incomplete_response`，说明 CLI 原文不在正则里，需要抓原文补正则。
+
+**合并注意**：上游若改了 `streamGoWorker` 的行循环、`semanticStatusForStreamError`，或自己开始处理撞上限 / 超长（查 `output token maximum`、`prompt is too long`、`handleLine`、`passLine`），对照后合并或下线；Windows 上这组流式测试会被跳过（依赖 Unix socket），必须在 Linux 上跑。
+
 ---
 
-## 补丁 5：空闲看门狗 180s → 600s（开发中）
+## 补丁 5：空闲看门狗 180s → 600s（待部署）
 
 | 项 | 值 |
 |---|---|
+| commit | `fork-patches` 分支 `fix(vm): configurable slot kernel job idle timeout` |
+| 改动文件 | `src/lib/vm/wrap-cli-runtime.mjs`（`wrapKernelWrapperScript` + `kernelEnvExports`）、`test/unit/wrap-cli-runtime.test.mjs`；运行配置 `.env`（不入库） |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **开发中** |
+| 状态 | **待部署**；不提 PR，自维护 |
 
 **动机（部署指南 §13 E 类）**：控制面 `KIN_STREAM_IDLE_TIMEOUT` 与槽内核 job 看门狗默认都是 180s 无帧即杀。超大单轮输出（43K–48K token、6–9 分钟）中出现 >180s 的静默段（最可能是 `display: omitted` 的思考）就被杀成 504 `worker_timeout`；09-29 同一请求 14 次尝试里 12 次失败。
+
+**改动**：控制面环境变量 `KIN_JOB_IDLE_SECS`（正整数）存在时，槽内核包装脚本多一行 `export KIN_JOB_IDLE_SECS=<n>`；不设置时脚本与上游逐字节相同，不会触发重写。原因：槽内核是 kin-XX 容器的 1 号进程，只从自身环境变量读这个看门狗；`kernel.json` 是硬编码模板（`idle_timeout_seconds: 180` 且会被反复重写），建槽 `docker run` 的环境变量是固定列表——改包装脚本是不重建槽容器就能生效的唯一途径。
+
+**配套运行配置**（写进 VPS `/opt/vm2api/.env`，不入库）：`KIN_JOB_IDLE_SECS=600`、`KIN_STREAM_IDLE_TIMEOUT=660000`。控制面的空闲超时必须**大于**内核的，让内核先发 `kin_cancel` 干净收尾，避免控制面的隐藏重发和回收槽内核。
+
+**生效步骤**：改 `.env` → `docker compose up -d`（控制面读到新环境变量）→ `POST /api/panel/wrap-cli/sync`（重写各槽包装脚本）→ 重启槽内核（`POST /api/panel/vms/vm-02/reload` 或 `docker restart kin-02`，**会中断该槽在途请求**）。
+
+**验证**：`docker exec kin-02 cat /home/kincli/.kin/kin-kernel` 第二行应为 `export KIN_JOB_IDLE_SECS=600`；`docker exec kin-02 sh -c 'tr "\0" "\n" < /proc/1/environ | grep KIN_JOB_IDLE_SECS'` 应输出 600。单测 `wrap-cli-runtime.test.mjs` 新增 1 条（未配置时逐字节不变、配置后仅多一行、非法值忽略）。
+
+**取舍**：真正卡死的请求要等最多 10 分钟才失败（原 3 分钟），期间占着一个并发席位。
+
+**合并注意**：上游若提供官方开关（kernel.json 字段、routing 配置或建槽环境变量），改用官方方式并下线本补丁（删掉 `.env` 里的 `KIN_JOB_IDLE_SECS` 后包装脚本自动恢复原样）。
