@@ -17,6 +17,7 @@ import {
   syncWrapSample,
   wrapCliHomeDir,
   wrapCliTemplateDir,
+  wrapKernelWrapperScript,
 } from '../../src/lib/vm/wrap-cli-runtime.mjs'
 import { listVms } from '../../src/lib/vm/vm-registry.mjs'
 
@@ -341,5 +342,32 @@ test('replaceKernelBinary rejects non-ELF payloads', () => {
     assert.equal(fs.existsSync(path.join(project, 'bin', 'kin-kernel')), false)
   } finally {
     fs.rmSync(project, { recursive: true, force: true })
+  }
+})
+
+test('fork patch slot-idle-timeout: kernel wrapper exports KIN_JOB_IDLE_SECS only when configured', () => {
+  const prev = process.env.KIN_JOB_IDLE_SECS
+  try {
+    delete process.env.KIN_JOB_IDLE_SECS
+    const plain = wrapKernelWrapperScript()
+    const lines = (script) => script.split(/\r?\n/)
+    assert.equal(lines(plain)[1].startsWith('DIR='), true)
+    assert.doesNotMatch(plain, /KIN_JOB_IDLE_SECS/)
+
+    process.env.KIN_JOB_IDLE_SECS = '600'
+    const tuned = wrapKernelWrapperScript()
+    assert.equal(lines(tuned)[1], 'export KIN_JOB_IDLE_SECS=600')
+    assert.deepEqual(
+      lines(tuned).filter((line) => line !== 'export KIN_JOB_IDLE_SECS=600'),
+      lines(plain),
+    )
+
+    for (const bad of ['abc', '0', '-5', '1.5', ' ']) {
+      process.env.KIN_JOB_IDLE_SECS = bad
+      assert.equal(wrapKernelWrapperScript(), plain, bad)
+    }
+  } finally {
+    if (prev == null) delete process.env.KIN_JOB_IDLE_SECS
+    else process.env.KIN_JOB_IDLE_SECS = prev
   }
 })

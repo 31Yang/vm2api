@@ -24,9 +24,21 @@ export const WRAP_GLIBC_LIBS = Object.freeze(['ld-linux-x86-64.so.2', 'libc.so.6
 
 const SECRET_NAMES = new Set(['credentials.json', '.credentials.json', 'oauth.json', '.claude.json', 'internal.token'])
 
+/**
+ * Fork patch (slot-idle-timeout): the kernel reads its job watchdog (default 180s without a CLI
+ * frame) only from its own environment, and slot containers get a fixed env list. Long silent
+ * thinking (display omitted) tripped it mid-answer. Unset keeps the wrapper byte-identical to
+ * upstream, so nothing is rewritten.
+ */
+function kernelEnvExports() {
+  const raw = String(process.env.KIN_JOB_IDLE_SECS || '').trim()
+  if (!/^\d+$/.test(raw) || Number(raw) <= 0) return ''
+  return `export KIN_JOB_IDLE_SECS=${Number(raw)}\n`
+}
+
 export function wrapKernelWrapperScript() {
   return `#!/bin/sh
-DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+${kernelEnvExports()}DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 BIN="$DIR/${WRAP_KERNEL_BIN}"
 LOADER="$DIR/${WRAP_GLIBC_DIR}/ld-linux-x86-64.so.2"
 if [ -x "$LOADER" ] && [ -x "$BIN" ]; then
