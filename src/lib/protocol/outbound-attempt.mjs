@@ -177,6 +177,13 @@ export function prepareCliHopBody(
   if (requestContext?.purpose === 'auto_mode_classifier') return prepareClassifierBody(canonicalBody, { stream })
   let body = officialMessagesBody(canonicalBody, { stream })
   delete body.metadata
+  // Fork patch (cli-hop-min-tokens): the wrap CLI throws a fatal "max_output_tokens" error when the
+  // response reaches max_tokens. Probes, ping tests, and third-party UI connection checks send
+  // max_tokens: 1 (or other small numbers), and the entry min_max_tokens floor (default 128) can
+  // lift a budget past an upstream-side clamp, so floor every small budget here instead.
+  if (body.max_tokens != null && Number(body.max_tokens) < CLI_HOP_MIN_MAX_TOKENS) {
+    body.max_tokens = CLI_HOP_MIN_MAX_TOKENS
+  }
   const leftover = stripCliOwnedSystem(body.system)
   if (leftover == null) delete body.system
   else body.system = leftover
@@ -192,6 +199,7 @@ export function prepareCliHopBody(
     body = ensureUnofficialEffortHigh(body)
     body = ensureClearThinkingContextManagement(body)
   }
+  body = raiseCliHopMaxTokensForThinking(body)
   body = stripInvalidThinkingBlocks(body)
   body = applyModelRequestRules(body)
   body = ensureOutputConfigSchema(body)
@@ -201,6 +209,24 @@ export function prepareCliHopBody(
   body = applyMessageBreakpoints(body, normalizeCacheTtl(cacheTtl), 'rewrite')
   return body
 }
+const CLI_HOP_MIN_MAX_TOKENS = 1024
+const CLI_HOP_THINKING_MIN_MAX_TOKENS = 4096
+
+/**
+ * Fork patch (cli-hop-min-tokens): thinking spends max_tokens too, so a small budget ends before any
+ * visible text and the wrap CLI turns that into a fatal error (auto-mode permission classifier:
+ * max_tokens 64 -> 128 plus filled adaptive thinking at effort high, 83 x 502 on 2026-09-29).
+ * Only raises the budget; usage is billed on actual output, not on max_tokens.
+ */
+export function raiseCliHopMaxTokensForThinking(body = {}) {
+  if (!body || typeof body !== 'object') return body
+  const type = String(body.thinking?.type || '').toLowerCase()
+  if (type !== 'adaptive' && type !== 'enabled') return body
+  const current = Number(body.max_tokens)
+  if (body.max_tokens == null || !Number.isFinite(current) || current >= CLI_HOP_THINKING_MIN_MAX_TOKENS) return body
+  return { ...body, max_tokens: CLI_HOP_THINKING_MIN_MAX_TOKENS }
+}
+
 /** Only legacy Haiku rejects thinking; Haiku 5.5 supports adaptive thinking. */
 export function pinHaikuCliThinking(body = {}) {
   if (!body || typeof body !== 'object') return body
