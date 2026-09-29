@@ -83,7 +83,7 @@ cd /opt/vm2api && docker compose restart
 
 **不变量**：状态码 503、error code `pool_unavailable`、调度决策、日志字段（logBag 记原始 code+message）均不变；e2e 约束保持（message 含「号池当前没有可用账号」前缀；body 不透出 eligible/account_pool_exhausted 字样——details 只白名单放行两个字段）。
 
-**部署方式**：控制面改动走 dev 镜像：`docker build -t vm2api:dev .` → `VM2API_IMAGE=vm2api VM2API_IMAGE_TAG=dev docker compose up -d`（`.env` 仍固定官方 tag，回退直接 `docker compose up -d` 即回官方镜像）。
+**部署方式**：控制面改动随 fork 自建镜像发布（2026-09-29 起 tag 形如 `vm2api:v<基线>-fp<N>`，由 `docker-compose.override.yml` 的 `image:` 固定，见上方升级流程第 4 步）。
 
 **验证**：`node --test test/unit/errors-map.test.mjs`（21/21）+ pool 相关单测（190/190，2026-09-29 通过）；熔断期实测 503 应带 `retry-after` 头与 `details.reset_at`。
 
@@ -91,14 +91,14 @@ cd /opt/vm2api && docker compose restart
 
 ---
 
-## 补丁 3：cli-hop 请求整形——对话中 system 的型号判定 + 小 max_tokens 保底（待部署）
+## 补丁 3：cli-hop 请求整形——对话中 system 的型号判定 + 小 max_tokens 保底（active）
 
 | 项 | 值 |
 |---|---|
 | commit | `fork-patches` 分支 `fix(protocol): cli-hop mid-system models and small max_tokens floor` |
 | 改动文件 | `src/lib/protocol/anthropic-policy.mjs`（`modelSupportsMidConversationSystem`）、`src/lib/protocol/outbound-attempt.mjs`（`prepareCliHopBody` 保底 + `raiseCliHopMaxTokensForThinking`）、`test/unit/cli-hop-body.test.mjs` |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **待部署**（本机单测通过）；不提 PR，自维护 |
+| 状态 | **active**（2026-09-29 09:55 UTC 随 `vm2api:v1.3.80-fp5` 部署；功能验证待额度窗口重置）；不提 PR，自维护 |
 
 **动机（2026-09-29 复审，详见部署指南 §13 A/C 类）**：
 - A：`anthropic-policy.mjs` 的 `modelSupportsMidConversationSystem()` 只排除 haiku，但 Sonnet 4.6 也不接受 messages 里的 role=system。调用方 system 中 CLI 吸收不了的剩余部分被放成对话中 system 消息后，sonnet-4-6 请求上游秒拒、被判空 hop → 502 `incomplete_response`（线上 154/154）。v1.3.33 引入。
@@ -114,14 +114,14 @@ cd /opt/vm2api && docker compose restart
 
 ---
 
-## 补丁 4：CLI 错误语义——撞 max_tokens 回 200、上游超长回 400（待部署）
+## 补丁 4：CLI 错误语义——撞 max_tokens 回 200、上游超长回 400（active）
 
 | 项 | 值 |
 |---|---|
 | commit | `fork-patches` 分支 `fix(transport): cli-hop output-cap stop and context-overflow 400` |
 | 改动文件 | `src/lib/transport/go-worker-client.mjs`、`test/unit/go-worker-client.test.mjs` |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **待部署**（Linux 容器单测通过）；不提 PR，自维护 |
+| 状态 | **active**（2026-09-29 09:55 UTC 随 `vm2api:v1.3.80-fp5` 部署；功能验证待额度窗口重置）；不提 PR，自维护 |
 
 **动机（部署指南 §13 B/D 类）**：
 - D：槽内 CLI 把 `stop_reason=max_tokens` 当致命错误（「Claude's response exceeded the N output token maximum」），vm2api 回 502 `upstream_error`；官方 API 语义是 200 + `stop_reason: max_tokens` + 已生成内容。客户端收到 502 只会原样重试、再烧一遍输出额度。
@@ -140,14 +140,14 @@ cd /opt/vm2api && docker compose restart
 
 ---
 
-## 补丁 5：空闲看门狗 180s → 600s（待部署）
+## 补丁 5：空闲看门狗 180s → 600s（active）
 
 | 项 | 值 |
 |---|---|
 | commit | `fork-patches` 分支 `fix(vm): configurable slot kernel job idle timeout` |
 | 改动文件 | `src/lib/vm/wrap-cli-runtime.mjs`（`wrapKernelWrapperScript` + `kernelEnvExports`）、`test/unit/wrap-cli-runtime.test.mjs`；运行配置 `.env`（不入库） |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **待部署**；不提 PR，自维护 |
+| 状态 | **active**（2026-09-29 09:55 UTC 部署；`.env` 已设 `KIN_JOB_IDLE_SECS=600`、`KIN_STREAM_IDLE_TIMEOUT=660000`，kin-02 内核环境已核验）；不提 PR，自维护 |
 
 **动机（部署指南 §13 E 类）**：控制面 `KIN_STREAM_IDLE_TIMEOUT` 与槽内核 job 看门狗默认都是 180s 无帧即杀。超大单轮输出（43K–48K token、6–9 分钟）中出现 >180s 的静默段（最可能是 `display: omitted` 的思考）就被杀成 504 `worker_timeout`；09-29 同一请求 14 次尝试里 12 次失败。
 
