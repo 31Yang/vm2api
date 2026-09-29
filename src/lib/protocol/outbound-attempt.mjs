@@ -342,6 +342,7 @@ export function prepareCliHopBody(
     body.auto_compact_window = windowTokens
   }
   delete body.metadata
+<<<<<<< HEAD
   // Rendered presets may disable or edit billing and the dynamic boundary.
   // The handler passes its resolved preset only after rendering; text detection
   // is a compatibility fallback for callers without that assembly state.
@@ -359,6 +360,26 @@ export function prepareCliHopBody(
     (personaPreset != null ||
       (Array.isArray(body.system) &&
         body.system.some((block) => textOf(block).trim() === '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')))
+=======
+  // Fork patch (cli-hop-min-tokens): the wrap CLI throws a fatal "max_output_tokens" error when the
+  // response reaches max_tokens. Probes, ping tests, and third-party UI connection checks send
+  // max_tokens: 1 (or other small numbers), and the entry min_max_tokens floor (default 128) can
+  // lift a budget past an upstream-side clamp, so floor every small budget here instead.
+  if (body.max_tokens != null && Number(body.max_tokens) < CLI_HOP_MIN_MAX_TOKENS) {
+    body.max_tokens = CLI_HOP_MIN_MAX_TOKENS
+  }
+  // Official family keeps the inbound system and its markers. Rewriting them
+  // into the persona template (billing / reporting / 1h) is what diverges from
+  // the captured Claude Code body: two ephemeral blocks, TTL omitted.
+  const assembledTemplate = (system) => {
+    const blocks = Array.isArray(system) ? system : []
+    const texts = blocks.map(textOf)
+    return (
+      texts.some((text) => text.trim() === '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__') ||
+      texts.some((text) => /^x-anthropic-billing-header/i.test(text) && /prompt_version=</.test(text))
+    )
+  }
+>>>>>>> b3abf913 (fix(protocol): cli-hop mid-system models and small max_tokens floor)
   if (!preserveSystem) {
     if (!lean && !shaped && !preparedZero) {
       const leftover = stripCliOwnedSystem(body.system, { preserveCallerEnvironment })
@@ -376,6 +397,7 @@ export function prepareCliHopBody(
   // Explicit sampling fields stay omitted or present exactly as the caller sent them.
   body = applyThinkingDisplay(body, thinkingDisplayMode(routing))
   body = stripSubagentBilling(body)
+  body = raiseCliHopMaxTokensForThinking(body)
   body = stripInvalidThinkingBlocks(body, { preserveThinkingBlocks })
   body = ensureOutputConfigSchema(body)
 
@@ -422,6 +444,24 @@ export function prepareCliHopBody(
     }
   }
   return body
+}
+
+const CLI_HOP_MIN_MAX_TOKENS = 1024
+const CLI_HOP_THINKING_MIN_MAX_TOKENS = 4096
+
+/**
+ * Fork patch (cli-hop-min-tokens): thinking spends max_tokens too, so a small budget ends before any
+ * visible text and the wrap CLI turns that into a fatal error (auto-mode permission classifier:
+ * max_tokens 64 -> 128 plus filled adaptive thinking at effort high, 83 x 502 on 2026-09-29).
+ * Only raises the budget; usage is billed on actual output, not on max_tokens.
+ */
+export function raiseCliHopMaxTokensForThinking(body = {}) {
+  if (!body || typeof body !== 'object') return body
+  const type = String(body.thinking?.type || '').toLowerCase()
+  if (type !== 'adaptive' && type !== 'enabled') return body
+  const current = Number(body.max_tokens)
+  if (body.max_tokens == null || !Number.isFinite(current) || current >= CLI_HOP_THINKING_MIN_MAX_TOKENS) return body
+  return { ...body, max_tokens: CLI_HOP_THINKING_MIN_MAX_TOKENS }
 }
 
 export function prepareOutboundAttempt({
