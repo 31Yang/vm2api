@@ -98,7 +98,7 @@ cd /opt/vm2api && docker compose restart
 | commit | `fork-patches` 分支 `fix(protocol): cli-hop mid-system models and small max_tokens floor` |
 | 改动文件 | `src/lib/protocol/anthropic-policy.mjs`（`modelSupportsMidConversationSystem`）、`src/lib/protocol/outbound-attempt.mjs`（`prepareCliHopBody` 保底 + `raiseCliHopMaxTokensForThinking`）、`test/unit/cli-hop-body.test.mjs` |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **active**（2026-09-29 09:55 UTC 随 `vm2api:v1.3.80-fp5` 部署；功能验证待额度窗口重置）；不提 PR，自维护 |
+| 状态 | **active**（2026-09-29 09:55 UTC 随 `vm2api:v1.3.80-fp5` 部署；功能验证待 2026-09-30 执行，脚本在工作区 `vps/vm2api-verify-fixes.sh`）；不提 PR，自维护 |
 
 **动机（2026-09-29 复审，详见部署指南 §13 A/C 类）**：
 - A：`anthropic-policy.mjs` 的 `modelSupportsMidConversationSystem()` 只排除 haiku，但 Sonnet 4.6 也不接受 messages 里的 role=system。调用方 system 中 CLI 吸收不了的剩余部分被放成对话中 system 消息后，sonnet-4-6 请求上游秒拒、被判空 hop → 502 `incomplete_response`（线上 154/154）。v1.3.33 引入。
@@ -121,7 +121,7 @@ cd /opt/vm2api && docker compose restart
 | commit | `fork-patches` 分支 `fix(transport): cli-hop output-cap stop and context-overflow 400` |
 | 改动文件 | `src/lib/transport/go-worker-client.mjs`、`test/unit/go-worker-client.test.mjs` |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **active**（2026-09-29 09:55 UTC 随 `vm2api:v1.3.80-fp5` 部署；功能验证待额度窗口重置）；不提 PR，自维护 |
+| 状态 | **active**（2026-09-29 09:55 UTC 随 `vm2api:v1.3.80-fp5` 部署；功能验证待 2026-09-30 执行，脚本在工作区 `vps/vm2api-verify-fixes.sh`）；不提 PR，自维护 |
 
 **动机（部署指南 §13 B/D 类）**：
 - D：槽内 CLI 把 `stop_reason=max_tokens` 当致命错误（「Claude's response exceeded the N output token maximum」），vm2api 回 502 `upstream_error`；官方 API 语义是 200 + `stop_reason: max_tokens` + 已生成内容。客户端收到 502 只会原样重试、再烧一遍输出额度。
