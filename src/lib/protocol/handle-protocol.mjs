@@ -194,7 +194,7 @@ export function createHandleProtocol(deps) {
     logBag.error_code = originalCode || mapped.body?.error?.code
     logBag.error_message = summary || originalMessage || mapped.body?.error?.message || null
     // Only a known wake time (cooldown / RPM / window reset) earns a Retry-After.
-    if (mapped.body?.error?.code === 'pool_overloaded' && Number(result?.retryAfterSec) > 0) {
+    if (['pool_overloaded', 'pool_unavailable'].includes(mapped.body?.error?.code) && Number(result?.retryAfterSec) > 0) {
       mapped.retryAfterSec = Number(result.retryAfterSec)
     }
     return mapped

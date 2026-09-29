@@ -52,11 +52,14 @@ function uniqueStickyKeys(stickyKey, stickyKeys) {
 }
 
 function poolError(code, message, details = {}) {
+  // Fork patch (quota-retry-after): a known wake time (quota window reset) earns a Retry-After on 503 too.
+  const soonest = Number(details?.soonest_available_ms)
   return {
     ok: false,
     status: 503,
     via: 'pool-failover',
     terminalState: 'exhausted',
+    retryAfterSec: Number.isFinite(soonest) && soonest > 0 ? Math.ceil(soonest / 1000) : null,
     body: {
       type: 'error',
       error: {

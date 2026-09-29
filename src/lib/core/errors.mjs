@@ -118,7 +118,7 @@ export function poolErrorKind(code, message = '') {
   return null
 }
 
-function poolClientError(kind) {
+function poolClientError(kind, originalDetails = null) {
   if (kind === 'overloaded') {
     return makeError({
       type: ErrorType.RATE_LIMIT,
@@ -127,10 +127,15 @@ function poolClientError(kind) {
       status: 429,
     })
   }
+  // Fork patch (quota-retry-after): tell the client when the pool recovers.
+  const soonest = Number(originalDetails?.soonest_available_ms)
+  const hasWake = Number.isFinite(soonest) && soonest > 0
+  const resetAt = hasWake ? new Date(Date.now() + soonest).toISOString() : null
   return makeError({
     type: ErrorType.OVERLOADED,
     code: ErrorCode.POOL_UNAVAILABLE,
-    message: CLIENT_POOL_UNAVAILABLE_MESSAGE,
+    message: hasWake ? `${CLIENT_POOL_UNAVAILABLE_MESSAGE}（预计 ${resetAt} 恢复）` : CLIENT_POOL_UNAVAILABLE_MESSAGE,
+    details: hasWake ? { reset_at: resetAt, retry_after_sec: Math.ceil(soonest / 1000) } : undefined,
     status: 503,
   })
 }
@@ -139,7 +144,7 @@ export function rewritePoolErrorForClient(mapped, originalBody = null) {
   const code = originalBody?.error?.code || mapped?.body?.error?.code
   const message = originalBody?.error?.message || mapped?.body?.error?.message || ''
   const kind = poolErrorKind(code, message)
-  return kind ? poolClientError(kind) : mapped
+  return kind ? poolClientError(kind, originalBody?.error?.details) : mapped
 }
 
 export function makeError({

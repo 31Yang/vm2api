@@ -96,10 +96,16 @@ function selectionSnapshot(candidates = [], available = [], extras = {}) {
   const waitPool = extras.waitPool || candidates
   const waitReasons = [...new Set((waitPool || []).map((candidate) => candidate.waitReason).filter(Boolean))]
   const soonest = (waitPool || []).map((candidate) => Number(candidate.availableAt) || 0).filter((value) => value > now)
+  // Fork patch (quota-retry-after): gated-out accounts (quota windows) carry their wake time here.
+  const excludedSoonest = (extras.excludedWakeAts || []).map(Number).filter((value) => value > now)
   return {
     reason: extras.reason,
     wait_ms: extras.waitMs ?? 0,
-    soonest_available_ms: soonest.length ? Math.min(...soonest) - now : null,
+    soonest_available_ms: soonest.length
+      ? Math.min(...soonest) - now
+      : excludedSoonest.length
+        ? Math.min(...excludedSoonest) - now
+        : null,
     wait_reasons: waitReasons,
     eligible: (candidates || []).length,
     available: (available || []).length,
@@ -157,6 +163,15 @@ function weightOf(vm, state) {
 
 function cooldownActive(until, now) {
   return Number(until) > now
+}
+
+/** Fork patch (quota-retry-after): normalize wake hints (ISO string / epoch s / epoch ms) to ms epoch. */
+function wakeMsOf(value) {
+  if (value == null) return null
+  const n = Number(value)
+  if (Number.isFinite(n) && n > 0) return n > 1e12 ? n : n * 1000
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 /** Account cooldowns that do not prove the account left the pool. */
@@ -263,7 +278,7 @@ export class PoolScheduler {
         code: 'no_available_accounts',
         waitMs,
         familyGated,
-        ...selectionSnapshot(candidates, available, { reason, waitMs, stickyCleared, waitPool }),
+        ...selectionSnapshot(candidates, available, { reason, waitMs, stickyCleared, waitPool, excludedWakeAts: candidates?.excludedWakeAts }),
       }
     }
     const failoverDeadline = Number(deadline) || null
@@ -443,6 +458,7 @@ export class PoolScheduler {
     this.runtimeRepo?.clearExpired?.(now)
     const summaries = listVms(this.projectRoot)
     const candidates = []
+    const excludedWakeAts = [] // Fork patch (quota-retry-after): wake hints from gated-out accounts
     const pin = pinVmId ? String(pinVmId).trim() : ''
     const deviceVm = deviceVmId ? String(deviceVmId).trim() : ''
     const conversationWindow = skipSessionSlot ? null : windowKey === undefined ? sessionKey : windowKey
@@ -470,7 +486,11 @@ export class PoolScheduler {
         borrow: !!conversationWindow && !claimWindow,
         skipSessionSlot,
       })
-      if (!eligibility.ok) continue
+      if (!eligibility.ok) {
+        const excludedWake = Number(eligibility.availableAt) || 0
+        if (excludedWake > now) excludedWakeAts.push(excludedWake)
+        continue
+      }
       const maxConcurrency = this.effectiveMaxConcurrency(
         vm,
         eligibility.account,
@@ -508,6 +528,7 @@ export class PoolScheduler {
         exec: this.executionContext(vm, accountId),
       })
     }
+    candidates.excludedWakeAts = excludedWakeAts
     return candidates
   }
 
@@ -713,7 +734,15 @@ export class PoolScheduler {
       if (!quotaGate.ok) {
         if (quotaGate.reason === 'concurrency_limit') markWait('concurrency_limit')
         else if (quotaGate.reason === 'rpm_limit') markWait('rpm_limit', quotaGate.detail?.reset_at)
-        else return { ok: false, reason: quotaGate.reason || 'quota_gate' }
+        else {
+          // Fork patch (quota-retry-after): keep the quota wake time so selection can surface it.
+          const quotaWake =
+            wakeMsOf(quotaGate.detail?.reset) ??
+            wakeMsOf(quotaGate.detail?.reset_at) ??
+            wakeMsOf(vm.temp_unschedulable_until) ??
+            wakeMsOf(vm.claude?.temp_unschedulable_until)
+          return { ok: false, reason: quotaGate.reason || 'quota_gate', availableAt: quotaWake }
+        }
       }
     }
     if (rustKernelBusy(workerStatus)) {
