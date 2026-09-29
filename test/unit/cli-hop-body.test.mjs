@@ -1,6 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { prepareCliHopBody, stripCliOwnedSystem } from '../../src/lib/protocol/outbound-attempt.mjs'
+import {
+  prepareCliHopBody,
+  stripCliOwnedSystem,
+  raiseCliHopMaxTokensForThinking,
+} from '../../src/lib/protocol/outbound-attempt.mjs'
+import { modelSupportsMidConversationSystem } from '../../src/lib/protocol/anthropic-policy.mjs'
+import { applyMinMaxTokens } from '../../src/lib/protocol/min-max-tokens.mjs'
 import { CRS_OFFICIAL_SYSTEM, CRS_OFFICIAL_CLI_SYSTEM } from '../../src/lib/identity/crs-persona.mjs'
 import { CRS_OFFICIAL_AGENT_PROMPT } from '../../src/lib/identity/official-cc-system-2.1.241.mjs'
 
@@ -350,6 +356,157 @@ test('cli-hop lifts role=system turns for models that reject them', () => {
   })
   assert.ok(body.messages.every((message) => message.role !== 'system'))
   assert.equal(body.system.at(-1).text, 'reminder')
+})
+
+test('prepareCliHopBody clamps small max_tokens to 1024 for automated probe tests', () => {
+  const probe1 = prepareCliHopBody({
+    model: 'claude-haiku-4-5',
+    max_tokens: 1,
+    messages: [{ role: 'user', content: '.' }],
+  })
+  assert.equal(probe1.max_tokens, 1024)
+
+  const probe32 = prepareCliHopBody({
+    model: 'claude-haiku-4-5',
+    max_tokens: 32,
+    messages: [{ role: 'user', content: 'ping' }],
+  })
+  assert.equal(probe32.max_tokens, 1024)
+
+  // Sonnet 5 gets adaptive thinking filled in, so the thinking floor applies (fork patch cli-hop-min-tokens).
+  const classifier64 = prepareCliHopBody({
+    model: 'claude-sonnet-5',
+    max_tokens: 64,
+    messages: [{ role: 'user', content: '<severity>0</severity>' }],
+  })
+  assert.equal(classifier64.max_tokens, 4096)
+
+  const normal = prepareCliHopBody({
+    model: 'claude-haiku-4-5',
+    max_tokens: 4096,
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(normal.max_tokens, 4096)
+})
+
+test('fork patch cli-hop-min-tokens: entry min_max_tokens floor no longer defeats the cli-hop clamp', () => {
+  // Claude Code auto-mode permission classifier as relayed through NewAPI (OpenAI chat -> Messages).
+  const inbound = applyMinMaxTokens(
+    {
+      model: 'claude-sonnet-5',
+      max_tokens: 64,
+      stop_sequences: ['</severity>'],
+      system: 'You are a security classifier.',
+      messages: [{ role: 'user', content: '<transcript>...</transcript>' }],
+    },
+    { enabled: true, value: 128 },
+  )
+  assert.equal(inbound.max_tokens, 128)
+  const body = prepareCliHopBody(inbound)
+  assert.equal(body.thinking.type, 'adaptive')
+  assert.equal(body.max_tokens, 4096)
+
+  // Haiku keeps thinking pinned off, so only the plain floor applies.
+  const haiku = prepareCliHopBody(
+    applyMinMaxTokens({ model: 'claude-haiku-4-5', max_tokens: 64, messages: [{ role: 'user', content: 'hi' }] }),
+  )
+  assert.equal(haiku.thinking.type, 'disabled')
+  assert.equal(haiku.max_tokens, 1024)
+
+  const haiku500 = prepareCliHopBody({
+    model: 'claude-haiku-4-5',
+    max_tokens: 500,
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+  assert.equal(haiku500.max_tokens, 1024)
+})
+
+test('fork patch cli-hop-min-tokens: caller-disabled thinking and large budgets are left alone', () => {
+  const disabled = prepareCliHopBody({
+    model: 'claude-sonnet-5',
+    max_tokens: 256,
+    thinking: { type: 'disabled' },
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+  assert.equal(disabled.thinking.type, 'disabled')
+  assert.equal(disabled.max_tokens, 1024)
+
+  const large = prepareCliHopBody({
+    model: 'claude-opus-5-5',
+    max_tokens: 64000,
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+  assert.equal(large.max_tokens, 64000)
+
+  // Upstream officialMessagesBody fills a missing budget with 128000; the floor must not touch it.
+  const missing = prepareCliHopBody({ model: 'claude-sonnet-5', messages: [{ role: 'user', content: 'hi' }] })
+  assert.equal(missing.max_tokens, 128000)
+
+  assert.equal(
+    raiseCliHopMaxTokensForThinking({ max_tokens: 100, thinking: { type: 'enabled', budget_tokens: 50 } }).max_tokens,
+    4096,
+  )
+  assert.equal(raiseCliHopMaxTokensForThinking({ max_tokens: 100 }).max_tokens, 100)
+})
+
+test('fork patch mid-system-models: Sonnet 4.6 lifts role=system turns like Haiku', () => {
+  // Claude Code session-title request: caller leftover system becomes a trailing role=system turn.
+  const body = prepareCliHopBody({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 32000,
+    messages: [
+      { role: 'user', content: '<session>fix the ui</session> Write the title.' },
+      { role: 'system', content: '<system-reminder>\nMANDATORY constraints for this turn.\n</system-reminder>' },
+    ],
+  })
+  assert.ok(body.messages.every((message) => message.role !== 'system'))
+  assert.match(body.system.at(-1).text, /MANDATORY constraints/)
+})
+
+test('fork patch mid-system-models: supported models keep role=system turns in place', () => {
+  for (const model of ['claude-opus-5', 'claude-opus-5-5', 'claude-sonnet-5', 'claude-sonnet-5-5']) {
+    const body = prepareCliHopBody({
+      model,
+      max_tokens: 64000,
+      messages: [
+        { role: 'user', content: 'u1' },
+        { role: 'system', content: 'reminder' },
+      ],
+    })
+    assert.equal(body.messages.at(-1).role, 'system', model)
+  }
+})
+
+test('fork patch mid-system-models: modelSupportsMidConversationSystem model table', () => {
+  // Expectations track the upstream implementation (v1.3.123): only the Claude 5 family accepts
+  // a mid-conversation role=system turn; Opus 4.8 and Fable 5 are now treated as unsupported.
+  const unsupported = [
+    'claude-haiku-4-5',
+    'claude-haiku-4-5-20251001',
+    'claude-sonnet-4-6',
+    'claude-sonnet-4-5-20250929',
+    'claude-sonnet-4-20250514',
+    'claude-opus-4-6',
+    'claude-opus-4-7',
+    'claude-opus-4-8',
+    'claude-opus-4-1-20250805',
+    'claude-3-7-sonnet-20250219',
+    'claude-fable-5',
+    'CLAUDE-SONNET-4-6',
+  ]
+  const supported = [
+    'claude-opus-5',
+    'claude-opus-5-5',
+    'claude-opus-5.5',
+    'claude-opus-5-5-20251001',
+    'claude-sonnet-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5',
+    'claude-haiku-5-5',
+    'claude-sonnet-5[1m]',
+  ]
+  for (const model of unsupported) assert.equal(modelSupportsMidConversationSystem(model), false, model)
+  for (const model of supported) assert.equal(modelSupportsMidConversationSystem(model), true, model)
 })
 
 test('cli-hop makes Opus 5.5 acceptable to Claude Code 2.1.280', () => {

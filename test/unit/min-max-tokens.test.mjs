@@ -24,7 +24,9 @@ test('disabling the floor preserves the caller budget through cli-hop preparatio
     { model: 'claude-haiku-4-5', max_tokens: 64, messages: [{ role: 'user', content: 'Print integers.' }] },
     { enabled: false },
   )
-  assert.equal(prepareCliHopBody(body).max_tokens, 64)
+  // Fork patch (cli-hop-min-tokens): cli-hop deliberately floors small budgets at 1024 so the wrap
+  // CLI cannot hit its fatal max_output_tokens error, even when the entry floor is disabled.
+  assert.equal(prepareCliHopBody(body).max_tokens, 1024)
 })
 
 test('custom floor value is honored and clamped', () => {
