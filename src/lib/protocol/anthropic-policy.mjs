@@ -199,9 +199,19 @@ export function modelSupportsContextManagement(modelId = '') {
   return true
 }
 
-/** Haiku 400s `role 'system' is not supported on this model`. */
+/**
+ * Haiku 400s `role 'system' is not supported on this model`.
+ * Fork patch (mid-system-models): Sonnet 4.6 rejects the role too (2026-09-28: 154/154 cli-hop
+ * requests carrying a role=system turn failed within ~250ms). Treat Claude 3 and every Claude 4.x
+ * before 4.8 as unsupported: a false "unsupported" only lifts the text into top-level system,
+ * a false "supported" fails every such request. Verified to accept it: Opus 4.8, Opus 5 / 5.5, Sonnet 5.
+ */
 export function modelSupportsMidConversationSystem(modelId = '') {
-  return !/haiku/i.test(String(modelId || ''))
+  const id = String(modelId || '').toLowerCase()
+  if (/haiku/.test(id)) return false
+  if (/claude-3/.test(id)) return false
+  if (/claude-(?:sonnet|opus)-4(?![-.]8)(?:[-.]|$)/.test(id)) return false
+  return true
 }
 
 /**
