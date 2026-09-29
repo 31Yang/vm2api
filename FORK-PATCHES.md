@@ -98,7 +98,7 @@ cd /opt/vm2api && docker compose restart
 | commit | `fork-patches` 分支 `fix(protocol): cli-hop mid-system models and small max_tokens floor` |
 | 改动文件 | `src/lib/protocol/anthropic-policy.mjs`（`modelSupportsMidConversationSystem`）、`src/lib/protocol/outbound-attempt.mjs`（`prepareCliHopBody` 保底 + `raiseCliHopMaxTokensForThinking`）、`test/unit/cli-hop-body.test.mjs` |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **active**（2026-09-29 09:55 UTC 随 `vm2api:v1.3.80-fp5` 部署；功能验证待 2026-09-30 执行，脚本在工作区 `vps/vm2api-verify-fixes.sh`）；不提 PR，自维护 |
+| 状态 | **active**（2026-09-29 09:55 UTC 随 `vm2api:v1.3.80-fp5` 部署；09-29 10:22 UTC 功能验证 A、C 通过）；不提 PR，自维护 |
 
 **动机（2026-09-29 复审，详见部署指南 §13 A/C 类）**：
 - A：`anthropic-policy.mjs` 的 `modelSupportsMidConversationSystem()` 只排除 haiku，但 Sonnet 4.6 也不接受 messages 里的 role=system。调用方 system 中 CLI 吸收不了的剩余部分被放成对话中 system 消息后，sonnet-4-6 请求上游秒拒、被判空 hop → 502 `incomplete_response`（线上 154/154）。v1.3.33 引入。
@@ -121,7 +121,7 @@ cd /opt/vm2api && docker compose restart
 | commit | `fork-patches` 分支 `fix(transport): cli-hop output-cap stop and context-overflow 400` |
 | 改动文件 | `src/lib/transport/go-worker-client.mjs`、`test/unit/go-worker-client.test.mjs` |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **active**（2026-09-29 09:55 UTC 随 `vm2api:v1.3.80-fp5` 部署；功能验证待 2026-09-30 执行，脚本在工作区 `vps/vm2api-verify-fixes.sh`）；不提 PR，自维护 |
+| 状态 | **active / 部分生效**（部署同上；09-29 验证：D 通过；B 未生效，见下方「09-29 验证结论」）；不提 PR，自维护 |
 
 **动机（部署指南 §13 B/D 类）**：
 - D：槽内 CLI 把 `stop_reason=max_tokens` 当致命错误（「Claude's response exceeded the N output token maximum」），vm2api 回 502 `upstream_error`；官方 API 语义是 200 + `stop_reason: max_tokens` + 已生成内容。客户端收到 502 只会原样重试、再烧一遍输出额度。
@@ -135,6 +135,8 @@ cd /opt/vm2api && docker compose restart
 **风险 / 未实证**：内核转发 CLI 错误时的实际 SSE 形态（是否先发 message_delta / message_stop、错误是否带 code）、以及超长时 CLI 输出的原文，都没有线上抓包。补丁对多种形态做了防御（内核已发 message_stop 时只吞错误、不重复收尾）；超长正则不匹配时退回原行为（无害）。
 
 **验证**：本机 Docker Linux 容器（`node:22-bookworm-slim`）`node --test test/unit/go-worker-client.test.mjs` 30/30（新增 7 条：超长状态映射、未提交超长→400、cli-hop 撞上限→max_tokens、未闭合 tool_use 先补 stop、内核已发 message_stop 不重复、非 cli-hop 与其他错误行为不变、流式超长→400），errors-map 21、upstream-error-policy 44、failover-runner 38、error-class 4 全过。部署后受控验证：① haiku（thinking 关闭）`max_tokens=1100` 让它写长文 → 应 200 + `stop_reason: max_tokens`（OpenAI 渠道 `finish_reason: length`）；② sonnet-4-6 灌 >200K token 纯文本 → 应 400 且消息含 prompt is too long。若 ② 仍是 502 `incomplete_response`，说明 CLI 原文不在正则里，需要抓原文补正则。
+
+**09-29 验证结论**：D 按预期（非流式 `finish_reason: length`、流式以 `stop_reason: max_tokens` 收尾、usage 记 1100 输出 token）。B 未生效：约 30 万 token 的 sonnet-4-6 请求仍是 502 `incomplete_response`，3 次同号尝试各约 0.5s、无 usage、日志无原文——槽内 CLI 碰到上游超长拒绝时没有吐出带文字的错误事件，而是无输出结束，所以 `CONTEXT_OVERFLOW_TEXT` 没有触发对象（代码无害，保留）。下一步：额度正常时直接向槽内核发一条超长诊断请求，抓原始 SSE / trailer（`X-Kin-Terminal-State` 等）和 `kin_job_done` 的内容，按实际信号改判定。
 
 **合并注意**：上游若改了 `streamGoWorker` 的行循环、`semanticStatusForStreamError`，或自己开始处理撞上限 / 超长（查 `output token maximum`、`prompt is too long`、`handleLine`、`passLine`），对照后合并或下线；Windows 上这组流式测试会被跳过（依赖 Unix socket），必须在 Linux 上跑。
 
