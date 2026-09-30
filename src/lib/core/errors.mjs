@@ -118,6 +118,13 @@ export function poolErrorKind(code, message = '') {
   return null
 }
 
+/** Fork patch (quota-retry-after): the team reads Beijing time; round up so 09:39:59Z reads 17:40. */
+function beijingClock(ms) {
+  const d = new Date(Math.ceil(ms / 60_000) * 60_000 + 8 * 3600_000)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
+}
+
 function poolClientError(kind, originalDetails = null) {
   if (kind === 'overloaded') {
     return makeError({
@@ -130,11 +137,14 @@ function poolClientError(kind, originalDetails = null) {
   // Fork patch (quota-retry-after): tell the client when the pool recovers.
   const soonest = Number(originalDetails?.soonest_available_ms)
   const hasWake = Number.isFinite(soonest) && soonest > 0
-  const resetAt = hasWake ? new Date(Date.now() + soonest).toISOString() : null
+  const wakeMs = hasWake ? Date.now() + soonest : null
+  const resetAt = hasWake ? new Date(wakeMs).toISOString() : null
   return makeError({
     type: ErrorType.OVERLOADED,
     code: ErrorCode.POOL_UNAVAILABLE,
-    message: hasWake ? `${CLIENT_POOL_UNAVAILABLE_MESSAGE}（预计 ${resetAt} 恢复）` : CLIENT_POOL_UNAVAILABLE_MESSAGE,
+    message: hasWake
+      ? `${CLIENT_POOL_UNAVAILABLE_MESSAGE}（预计北京时间 ${beijingClock(wakeMs)} 恢复）`
+      : CLIENT_POOL_UNAVAILABLE_MESSAGE,
     details: hasWake ? { reset_at: resetAt, retry_after_sec: Math.ceil(soonest / 1000) } : undefined,
     status: 503,
   })

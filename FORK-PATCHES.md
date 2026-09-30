@@ -69,9 +69,9 @@ cd /opt/vm2api && docker compose restart
 | 项 | 值 |
 |---|---|
 | commit | `fork-patches` 分支（src/ 控制面改动，见分支 git log） |
-| 改动文件 | `src/lib/pool/pool-scheduler.mjs`、`src/lib/pool/failover-runner.mjs`、`src/lib/core/errors.mjs`、`src/lib/protocol/handle-protocol.mjs` |
-| 引入日期 | 2026-09-29，基线 v1.3.79 |
-| 状态 | **active，但实际效果与设计不符**（2026-09-30 线上数据：真熔断不带恢复时刻，只有上游"在途保护"带，且时间偏长，见下方「已知问题」）；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游仍未给 `pool_unavailable` 带恢复时刻；`handle-protocol.mjs` 的上游改动在别处（`cache_continuity` 日志、cli-hop 缓存 TTL），自动合并 |
+| 改动文件 | `src/lib/pool/pool-scheduler.mjs`、`src/lib/pool/failover-runner.mjs`、`src/lib/core/errors.mjs`、`src/lib/protocol/handle-protocol.mjs`；测试 `test/unit/fork-quota-retry-after.test.mjs`（fork 专用，2026-09-30 新增） |
+| 引入日期 | 2026-09-29，基线 v1.3.79；2026-09-30 修正（见下方「已知问题与修正」） |
+| 状态 | **active**；不提 PR，自维护。2026-09-30 线上数据证实初版效果与设计不符（真熔断不带恢复时刻，只有上游"在途保护"带，且时间偏长），同日修正，随 `vm2api:v1.3.85-fp7` 部署。2026-09-30 核对 v1.3.85：上游仍未给 `pool_unavailable` 带恢复时刻；`handle-protocol.mjs` 的上游改动在别处（`cache_continuity` 日志、cli-hop 缓存 TTL），自动合并 |
 
 **动机**：quota_5h_safety 等额度熔断把账号摘出调度时，客户端只收到 503 `pool_unavailable`「号池当前没有可用账号」，无恢复时刻 → 客户端盲目重试刷日志。调度层其实已知恢复时刻（quota gate `detail.reset` / `temp_unschedulable_until`），但 quota 硬门早退（`return { ok:false }`）丢弃了它。
 
@@ -80,31 +80,49 @@ cd /opt/vm2api && docker compose restart
 - `eligibleCandidates` 收集被门排除账号的 wake 到 `candidates.excludedWakeAts`（数组附加属性，JSON 序列化自动丢弃，不进日志）；
 - `selectionSnapshot` 在 waitPool 无 soonest 时兜底用 excludedWakeAts；
 - `poolError`（503 路径，全库仅 selectionFailure 一个调用点）照 429 先例带 `retryAfterSec`；
-- `poolClientError('unavailable')` 附加白名单 details `{reset_at, retry_after_sec}` 与消息后缀「（预计 <ISO> 恢复）」；
+- `poolClientError('unavailable')` 附加白名单 details `{reset_at, retry_after_sec}` 与消息后缀「（预计北京时间 MM-DD HH:MM 恢复）」（初版为 ISO UTC，2026-09-30 改为北京时间、向上取整到分钟；`details.reset_at` 仍是 ISO UTC）；
 - `handle-protocol` 的 retry-after 头放行从 pool_overloaded 放宽到 pool_unavailable。
 
-**不变量**：状态码 503、error code `pool_unavailable`、调度决策、日志字段（logBag 记原始 code+message）均不变；e2e 约束保持（message 含「号池当前没有可用账号」前缀；body 不透出 eligible/account_pool_exhausted 字样——details 只白名单放行两个字段）。
+**不变量**：状态码 503、error code `pool_unavailable`、调度决策（哪些账号放行、排除、排队都不变，只改 503 带不带恢复时刻）、日志字段（logBag 记原始 code+message）均不变；e2e 约束保持（message 含「号池当前没有可用账号」前缀；body 不透出 eligible/account_pool_exhausted 字样——details 只白名单放行两个字段）。
 
 **部署方式**：控制面改动随 fork 自建镜像发布（2026-09-29 起 tag 形如 `vm2api:v<基线>-fp<N>`，由 `docker-compose.override.yml` 的 `image:` 固定，见上方升级流程第 4 步）。
 
-**验证**：`node --test test/unit/errors-map.test.mjs`（21/21）+ pool 相关单测（190/190，2026-09-29 通过）；熔断期实测 503 应带 `retry-after` 头与 `details.reset_at`（2026-09-30 核实：线上熔断期从未满足，见下方「已知问题」）。
+**验证**：
+- 单测：`node --test test/unit/fork-quota-retry-after.test.mjs`（9 条）。这组测试用真实 `AccountQuota` / `evaluateAccount`，不 mock 额度闸。修正前的代码会挂 7 条，另 2 条是"放行结果不变""无恢复时刻时消息不变"的对照。
+- 2026-09-30 修正时的全量结果：
+  - Linux 容器（`node:22-bookworm-slim`）166 个测试文件（不含已知会挂起的 `wrap-cli-runtime`）共 1905 条：1894 通过、0 失败、9 跳过。
+  - 另有 2 个文件整体超时被取消：`database.test.mjs`、`db-migration-sub2api.test.mjs`。修正前的代码在同一容器里也一样，属环境问题。
+  - Windows 上号池 / 错误相关 22 个文件 449 条，只有 2 条失败，修正前同样失败，属平台差异。
+- 线上：`bash ~/vm2api-deploy-v1.3.85-fp7.sh verify`。只在账号真熔断时发 1 条 haiku 小请求（在 VPS 上被拒、不耗额度），应得到 503、`retry-after` 约等于到窗口重置的秒数、消息带「预计北京时间 … 恢复」。
+- 初版的验证只跑了既有单测（errors-map 21/21、pool 190/190，2026-09-29），线上熔断期从未满足"带恢复时刻"，见下方。
 
-**已知问题（2026-09-30 线上数据，未修）**：本补丁只在上游"在途保护"时生效，给出的恢复时刻还偏长几小时；真熔断反而不带恢复时刻。
+**已知问题与修正（2026-09-30）**：初版只在上游"在途保护"时生效，给出的恢复时刻还偏长几小时；真熔断反而不带恢复时刻。
 - **真熔断走不到本补丁**：`checkEligibility` 先调 `evaluateAccount`（`src/lib/pool/availability.mjs`）。它发现 `u5 >= limit_5h` 就直接返回 `{ ok:false, reason }`，不带恢复时刻，轮不到后面挂了本补丁的 `accountQuota.canAccept`。上游已拒（`headerHardBlocked`）同理。
   - 证据：补丁 09-29 02:42 UTC 已上线，但 09-29 09:11–09:53 UTC 的 126 条熔断 503，以及 09-30 06:44 UTC 起的熔断 503，`error_message` 都只有 `no_eligible_accounts eligible=0`，没有 `soonest`。
   - 所以客户端既没收到 `retry-after`，也没看到"预计…恢复"。
 - **能走到 `canAccept` 额度分支的，实际只剩"在途保护"**：上游 2e34da0（09-22）的 `safetyTripped`，在用量 ≥ 档位线 − 0.05、且账号有在途请求时拒绝，Max 档即 90% 起。
   - 这种拦截在在途请求结束后就解除，本补丁却给它带上 5h 重置时刻。
   - 例：09-30 06:31–06:33 UTC 的 6 条 503，`retry-after` 为 11,210–11,297 秒（约 3.1 小时），消息写"预计 09:40Z 恢复"，实际几分钟内就重新放行。
-- **单测没覆盖**：现有单测用 mock 的 quota gate 直接返回拒绝，没走 `evaluateAccount` 这条真实路径，所以当时没发现。
-- **修法（未排期，二选一）**：
-  1. 修正：
-     - `evaluateAccount` 的额度早退（`quota_5h_safety` / `quota_7d_safety` / `quota_*_header`）把 `until` 带成 `availableAt`；
-     - `canAccept` 的在途保护分支（`detail.utilization < limit`）不带恢复时刻；
-     - 补一条走真实 `evaluateAccount` 的调度层单测。
-  2. 下线本补丁，回到上游行为：503 一律不带恢复时刻。
+- **单测没覆盖**：初版只跑了既有单测，它们用 mock 的 quota gate 直接返回拒绝，没走 `evaluateAccount` 这条真实路径，所以当时没发现。
+- **修正（2026-09-30，用户选择修正而非下线，随 `vm2api:v1.3.85-fp7` 部署）**：只改 `pool-scheduler.mjs` 和 `errors.mjs`，不改调度决策。
+  1. `checkEligibility` 里 `evaluateAccount` 拒绝（`key === 'quota'`，即 5h/7d 的 safety 与 header 拒绝）时，带上它已算好的 `until`（窗口重置时刻）。这是上游代码里唯一新改的一行。
+  2. 被排除账号的恢复时刻改由 `exclusionWakeOf` 统一读取：读 `availableAt`，没有则读 `until`。这样上游 429/529 冻结（`hardBlock`）和熔断器（`circuit_open`）原本就带的 `until` 也会生效。
+  3. `canAccept` 的额度拒绝若是在途保护（`inflightGuardTrip`：`quota_*_safety` 且 `detail.utilization < limit`），标记 `transient`，不带恢复时刻。
+  4. 被排除的账号里只要有一个是"随时可能恢复"的（在途保护、`worker_unhealthy`、`session_limit`），整个号池就不报恢复时刻（`excludedTransient`）。这避免多号时拿另一个号几小时后的重置时刻误导客户端。
+  5. 客户端消息改为北京时间，见上方「改动」。
+- 修正后的行为：
+  - 真熔断：503 带 `retry-after`（到窗口重置的秒数），提示「预计北京时间 … 恢复」；
+  - 在途保护：503 不带，客户端按自己的退避重试；
+  - 上游 429/529 冻结：带冻结结束时刻；
+  - 被在途保护拦下的请求仍是立即 503，不排队（上游行为，未改）。
 
-**合并注意**：上游若给 pool_unavailable 原生带 retryAfterSec/reset_at（查 `handle-protocol.mjs` 的 retryAfterSec 放行条件、`errors.mjs` 的 `poolClientError`），本补丁整条下线（下线即删除本四文件改动，回官方镜像）；rebase 冲突集中在 `selectionSnapshot` / quota gate / `poolClientError` 三处。
+**合并注意**：上游若给 pool_unavailable 原生带 retryAfterSec/reset_at（查 `handle-protocol.mjs` 的 retryAfterSec 放行条件、`errors.mjs` 的 `poolClientError`），本补丁整条下线（下线即删除本四文件改动与 fork 专用测试文件，回官方镜像）。rebase 冲突集中在以下几处：
+- `selectionSnapshot`；
+- `eligibleCandidates` 的排除分支；
+- `checkEligibility` 的 `evaluateAccount` 拒绝行与 quota gate 分支；
+- `poolClientError`。
+
+上游若改了 `safetyTripped` 的在途规则（`account-quota.mjs`）或 `canAccept` 的 detail 字段（`utilization` / `limit_5h` / `limit_7d`），要同步核对 `inflightGuardTrip`。
 
 ---
 

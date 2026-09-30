@@ -96,8 +96,11 @@ function selectionSnapshot(candidates = [], available = [], extras = {}) {
   const waitPool = extras.waitPool || candidates
   const waitReasons = [...new Set((waitPool || []).map((candidate) => candidate.waitReason).filter(Boolean))]
   const soonest = (waitPool || []).map((candidate) => Number(candidate.availableAt) || 0).filter((value) => value > now)
-  // Fork patch (quota-retry-after): gated-out accounts (quota windows) carry their wake time here.
-  const excludedSoonest = (extras.excludedWakeAts || []).map(Number).filter((value) => value > now)
+  // Fork patch (quota-retry-after): gated-out accounts (quota windows) carry their wake time here,
+  // unless one of them may clear any moment — then the pool has no honest wake time.
+  const excludedSoonest = extras.excludedTransient
+    ? []
+    : (extras.excludedWakeAts || []).map(Number).filter((value) => value > now)
   return {
     reason: extras.reason,
     wait_ms: extras.waitMs ?? 0,
@@ -172,6 +175,38 @@ function wakeMsOf(value) {
   if (Number.isFinite(n) && n > 0) return n > 1e12 ? n : n * 1000
   const parsed = Date.parse(value)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+/**
+ * Fork patch (quota-retry-after): exclusions that can clear any moment (a slot kernel coming
+ * back, an idle session freeing up). The in-flight quota margin is flagged at its gate.
+ */
+const TRANSIENT_EXCLUSIONS = new Set(['worker_unhealthy', 'session_limit'])
+
+/** Fork patch (quota-retry-after): `{ transient }` or `{ wake }` for one gated-out account. */
+function exclusionWakeOf(eligibility, now) {
+  if (eligibility?.transient || TRANSIENT_EXCLUSIONS.has(eligibility?.reason)) return { transient: true }
+  const wake = wakeMsOf(eligibility?.availableAt ?? eligibility?.until)
+  return wake > now ? { wake } : {}
+}
+
+function ratioOf(value) {
+  if (value == null || value === '') return null
+  const n = Number(value)
+  if (!Number.isFinite(n)) return null
+  return n > 1.5 ? n / 100 : n
+}
+
+/**
+ * Fork patch (quota-retry-after): AccountQuota's safety gate also trips below the line when a
+ * call is in flight (last 0.05). That clears as soon as the call finishes — not at the reset.
+ */
+function inflightGuardTrip(gate) {
+  if (!/^quota_(5h|7d)_safety$/.test(String(gate?.reason || ''))) return false
+  const detail = gate.detail || {}
+  const utilization = ratioOf(detail.utilization)
+  const limit = ratioOf(detail.limit_5h ?? detail.limit_7d ?? detail.safety_ratio)
+  return utilization != null && limit != null && utilization < limit
 }
 
 /** Account cooldowns that do not prove the account left the pool. */
@@ -278,7 +313,14 @@ export class PoolScheduler {
         code: 'no_available_accounts',
         waitMs,
         familyGated,
-        ...selectionSnapshot(candidates, available, { reason, waitMs, stickyCleared, waitPool, excludedWakeAts: candidates?.excludedWakeAts }),
+        ...selectionSnapshot(candidates, available, {
+          reason,
+          waitMs,
+          stickyCleared,
+          waitPool,
+          excludedWakeAts: candidates?.excludedWakeAts,
+          excludedTransient: candidates?.excludedTransient,
+        }),
       }
     }
     const failoverDeadline = Number(deadline) || null
@@ -459,6 +501,7 @@ export class PoolScheduler {
     const summaries = listVms(this.projectRoot)
     const candidates = []
     const excludedWakeAts = [] // Fork patch (quota-retry-after): wake hints from gated-out accounts
+    let excludedTransient = false
     const pin = pinVmId ? String(pinVmId).trim() : ''
     const deviceVm = deviceVmId ? String(deviceVmId).trim() : ''
     const conversationWindow = skipSessionSlot ? null : windowKey === undefined ? sessionKey : windowKey
@@ -487,8 +530,9 @@ export class PoolScheduler {
         skipSessionSlot,
       })
       if (!eligibility.ok) {
-        const excludedWake = Number(eligibility.availableAt) || 0
-        if (excludedWake > now) excludedWakeAts.push(excludedWake)
+        const hint = exclusionWakeOf(eligibility, now)
+        if (hint.transient) excludedTransient = true
+        else if (hint.wake) excludedWakeAts.push(hint.wake)
         continue
       }
       const maxConcurrency = this.effectiveMaxConcurrency(
@@ -529,6 +573,7 @@ export class PoolScheduler {
       })
     }
     candidates.excludedWakeAts = excludedWakeAts
+    candidates.excludedTransient = excludedTransient
     return candidates
   }
 
@@ -638,7 +683,8 @@ export class PoolScheduler {
           if (ev.key === 'cool') {
             // cooldown is a wait, not a hard skip — handled below
           } else {
-            return { ok: false, reason: ev.reason || ev.key || 'account_gated' }
+            // Fork patch (quota-retry-after): a real 5h/7d break knows its window reset here.
+            return { ok: false, reason: ev.reason || ev.key || 'account_gated', until: ev.key === 'quota' ? ev.until : null }
           }
         }
       }
@@ -734,7 +780,10 @@ export class PoolScheduler {
       if (!quotaGate.ok) {
         if (quotaGate.reason === 'concurrency_limit') markWait('concurrency_limit')
         else if (quotaGate.reason === 'rpm_limit') markWait('rpm_limit', quotaGate.detail?.reset_at)
-        else {
+        else if (inflightGuardTrip(quotaGate)) {
+          // Fork patch (quota-retry-after): clears when the call in flight finishes; no wake time.
+          return { ok: false, reason: quotaGate.reason, transient: true }
+        } else {
           // Fork patch (quota-retry-after): keep the quota wake time so selection can surface it.
           const quotaWake =
             wakeMsOf(quotaGate.detail?.reset) ??
