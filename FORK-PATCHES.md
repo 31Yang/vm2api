@@ -140,6 +140,15 @@ cd /opt/vm2api && docker compose restart
 
 **09-29 验证结论**：D 按预期（非流式 `finish_reason: length`、流式以 `stop_reason: max_tokens` 收尾、usage 记 1100 输出 token）。B 未生效：约 30 万 token 的 sonnet-4-6 请求仍是 502 `incomplete_response`，3 次同号尝试各约 0.5s、无 usage、日志无原文——槽内 CLI 碰到上游超长拒绝时没有吐出带文字的错误事件，而是无输出结束，所以 `CONTEXT_OVERFLOW_TEXT` 没有触发对象（代码无害，保留）。下一步：额度正常时直接向槽内核发一条超长诊断请求，抓原始 SSE / trailer（`X-Kin-Terminal-State` 等）和 `kin_job_done` 的内容，按实际信号改判定。
 
+**09-30 定位（v1.3.85 下复测仍是 502）**：
+- 槽内 `cli-node` 是 UPX 压缩的 Bun 可执行文件，`upx -d` 后能直接读 JS。源码显示，CLI 在原生任务循环里遇到 API 错误消息（`isApiErrorMessage`）时会向内核发 `kin_job_error`，并附 `extractErrorText` 取出的文字：
+  - 超长时通常是 `Prompt is too long`；
+  - 若先走了被动压缩又失败，则抛出 `Conversation too long. Press esc twice to go up a few messages and try again.`，同样经 `kin_job_error` 上报。
+- Node 这边看到的却是：HTTP 200、有首字节（约 0.47s）、无内容、无 `error` 事件，3 次尝试各约 0.5s，内核日志也不记单次请求。所以文字丢在闭源 Rust 内核（`kin-kernel.bin`）转发给 Node 这一步，或者被改成了 Node 不处理的形式。内核字符串里能看到 `kin_job_error`、`X-Kin-Event-Count` 等，但转换逻辑读不出来。
+- 修法分两步：
+  1. 诊断：在 vm2api 容器里另起一个 Node 进程，给 `http.request` 包一层记录后调用 `streamGoWorker`（`workerRequest` 在调用时才取 `http.request`，所以不用改线上代码），抓一次超长请求的原始 SSE 和 trailer；
+  2. 按结果修：文字能到达 Node，就把 `Conversation too long` 并入 `CONTEXT_OVERFLOW_TEXT`，并解析对应事件；到不了，就在 cli-hop"秒回空回复"时调 `countTokensViaWorker`（官方 token 计数接口，免费），实数超过模型窗口就回 400、不重试。
+
 **合并注意**：上游若改了 `streamGoWorker` 的行循环、`semanticStatusForStreamError`，或自己开始处理撞上限 / 超长（查 `output token maximum`、`prompt is too long`、`handleLine`、`passLine`），对照后合并或下线；Windows 上这组流式测试会被跳过（依赖 Unix socket），必须在 Linux 上跑。
 
 ---
