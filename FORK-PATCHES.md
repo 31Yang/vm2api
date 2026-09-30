@@ -31,7 +31,7 @@
 | commit | `fix/egress-self-loop` 分支 HEAD（VPS `fork-patches` 同名 commit） |
 | 改动文件 | `worker/internal/egress/server.go`、`worker/internal/egress/server_test.go` |
 | 引入日期 | 2026-09-22，基线 v1.3.21 |
-| 状态 | **active**；2026-09-30 再核对 v1.3.80→v1.3.85：`worker/`、`bin/` 零 diff（本区间只有 `share/wrap-cli/cli-node` 变），`bin/kin-egress.patched` 继续有效、无需重编。2026-09-29 再核对 v1.3.79→v1.3.80：`worker/`、`bin/`、`share/` 零 diff，`bin/kin-egress.patched` 继续有效、无需重编。此前核对：v1.3.74→v1.3.79 上游未动 `worker/internal/egress`（`server.go` 零 diff）、`bin/kin-egress` 未随 tag 变化，无需重编，`bin/kin-egress.patched`（v1.3.74 基线产物）继续有效；上游仍无 `loopsToSelf` 同类防护（`sameHostPort` 旧守卫不覆盖本回路），补丁保留；不提 PR，自维护 |
+| 状态 | **active**；2026-09-30 再核对 v1.3.80→v1.3.85：`worker/`、`bin/` 零 diff（本区间只有 `share/wrap-cli/cli-node` 变），`bin/kin-egress.patched` 继续有效、无需重编；`vm2api:v1.3.85-fp6` 部署后 `KIN_EGRESS_BIN` 仍指向 `kin-egress.patched`。2026-09-29 再核对 v1.3.79→v1.3.80：`worker/`、`bin/`、`share/` 零 diff，`bin/kin-egress.patched` 继续有效、无需重编。此前核对：v1.3.74→v1.3.79 上游未动 `worker/internal/egress`（`server.go` 零 diff）、`bin/kin-egress` 未随 tag 变化，无需重编，`bin/kin-egress.patched`（v1.3.74 基线产物）继续有效；上游仍无 `loopsToSelf` 同类防护（`sameHostPort` 旧守卫不覆盖本回路），补丁保留；不提 PR，自维护 |
 
 **根因**：控制面代理池每 10 分钟探测一次（`src/lib/vm/proxy-pool.mjs` 的 `probe_interval_min: 10`），`egressListening` 的 `waitListen` 会向 kin-egress 监听地址（如 `172.19.0.1:34722`）发起真实 TCP 连接探测存活性。kin-egress 的透明转发对"每个接受的连接"按其 OriginalDst 经 SOCKS5 转发——探测连接的 OriginalDst 就是监听地址本身，于是向 SOCKS 代理（vps-socks）发起 `CONNECT 172.19.0.1:34722`；代理回拨该地址再次被 kin-egress 接受并转发，形成自持放大回路：一条种子连接约 22 秒放大到 7500+ 次 SOCKS 拨号，约 30–60 秒内耗尽代理进程 65535 个 FD（`accept4: too many open files`），vps-socks 崩溃重启；回路随崩溃熄灭，10 分钟后下一次探测重新点燃——表现为 vps-socks 每 ~10 分钟崩溃一次的稳定周期。
 
@@ -100,7 +100,7 @@ cd /opt/vm2api && docker compose restart
 | commit | `fork-patches` 分支 `fix(protocol): cli-hop mid-system models and small max_tokens floor` |
 | 改动文件 | `src/lib/protocol/anthropic-policy.mjs`（`modelSupportsMidConversationSystem`）、`src/lib/protocol/outbound-attempt.mjs`（`prepareCliHopBody` 保底 + `raiseCliHopMaxTokensForThinking`）、`test/unit/cli-hop-body.test.mjs` |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **active**（2026-09-29 09:55 UTC 随 `vm2api:v1.3.80-fp5` 部署；09-29 10:22 UTC 功能验证 A、C 通过）；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游 `modelSupportsMidConversationSystem` 与 `<= 64` 保底均未改，补丁保留；上游给 `prepareCliHopBody` 加了 `cacheTtl` 参数并在末尾调用 `applyMessageBreakpoints`，与本补丁改动的行不重叠，自动合并 |
+| 状态 | **active**（2026-09-29 09:55 UTC 随 `vm2api:v1.3.80-fp5` 部署；09-29 10:22 UTC 功能验证 A、C 通过）；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游 `modelSupportsMidConversationSystem` 与 `<= 64` 保底均未改，补丁保留；上游给 `prepareCliHopBody` 加了 `cacheTtl` 参数并在末尾调用 `applyMessageBreakpoints`，与本补丁改动的行不重叠，自动合并。2026-09-30 02:11 UTC 随 `vm2api:v1.3.85-fp6` 部署，复测 A、C PASS |
 
 **动机（2026-09-29 复审，详见部署指南 §13 A/C 类）**：
 - A：`anthropic-policy.mjs` 的 `modelSupportsMidConversationSystem()` 只排除 haiku，但 Sonnet 4.6 也不接受 messages 里的 role=system。调用方 system 中 CLI 吸收不了的剩余部分被放成对话中 system 消息后，sonnet-4-6 请求上游秒拒、被判空 hop → 502 `incomplete_response`（线上 154/154）。v1.3.33 引入。
@@ -123,7 +123,7 @@ cd /opt/vm2api && docker compose restart
 | commit | `fork-patches` 分支 `fix(transport): cli-hop output-cap stop and context-overflow 400` |
 | 改动文件 | `src/lib/transport/go-worker-client.mjs`、`test/unit/go-worker-client.test.mjs` |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **active / 部分生效**（部署同上；09-29 验证：D 通过；B 未生效，见下方「09-29 验证结论」）；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游未动 `go-worker-client.mjs`，也没处理撞上限 / 超长 |
+| 状态 | **active / 部分生效**（部署同上；09-29 验证：D 通过；B 未生效，见下方「09-29 验证结论」）；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游未动 `go-worker-client.mjs`，也没处理撞上限 / 超长。随 `vm2api:v1.3.85-fp6` 部署后复测：D1、D2 PASS（用例需带一句 system，否则 v1.3.82 起无 system 的 haiku 会拒写长文、测不到上限），B 在新版 CLI 下仍是 502 `incomplete_response` |
 
 **动机（部署指南 §13 B/D 类）**：
 - D：槽内 CLI 把 `stop_reason=max_tokens` 当致命错误（「Claude's response exceeded the N output token maximum」），vm2api 回 502 `upstream_error`；官方 API 语义是 200 + `stop_reason: max_tokens` + 已生成内容。客户端收到 502 只会原样重试、再烧一遍输出额度。
@@ -151,7 +151,7 @@ cd /opt/vm2api && docker compose restart
 | commit | `fork-patches` 分支 `fix(vm): configurable slot kernel job idle timeout` |
 | 改动文件 | `src/lib/vm/wrap-cli-runtime.mjs`（`wrapKernelWrapperScript` + `kernelEnvExports`）、`test/unit/wrap-cli-runtime.test.mjs`；运行配置 `.env`（不入库） |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **active**（2026-09-29 09:55 UTC 部署；`.env` 已设 `KIN_JOB_IDLE_SECS=600`、`KIN_STREAM_IDLE_TIMEOUT=660000`，kin-02 内核环境已核验）；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游仍硬编码 `idle_timeout_seconds: 180`，没有官方开关 |
+| 状态 | **active**（2026-09-29 09:55 UTC 部署；`.env` 已设 `KIN_JOB_IDLE_SECS=600`、`KIN_STREAM_IDLE_TIMEOUT=660000`，kin-02 内核环境已核验）；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游仍硬编码 `idle_timeout_seconds: 180`，没有官方开关。随 `vm2api:v1.3.85-fp6` 部署后，`wrap-cli/sync` 重写的 kin-02 包装脚本与内核 1 号进程环境仍含 `KIN_JOB_IDLE_SECS=600` |
 
 **动机（部署指南 §13 E 类）**：控制面 `KIN_STREAM_IDLE_TIMEOUT` 与槽内核 job 看门狗默认都是 180s 无帧即杀。超大单轮输出（43K–48K token、6–9 分钟）中出现 >180s 的静默段（最可能是 `display: omitted` 的思考）就被杀成 504 `worker_timeout`；09-29 同一请求 14 次尝试里 12 次失败。
 
