@@ -71,7 +71,7 @@ cd /opt/vm2api && docker compose restart
 | commit | `fork-patches` 分支（src/ 控制面改动，见分支 git log） |
 | 改动文件 | `src/lib/pool/pool-scheduler.mjs`、`src/lib/pool/failover-runner.mjs`、`src/lib/core/errors.mjs`、`src/lib/protocol/handle-protocol.mjs` |
 | 引入日期 | 2026-09-29，基线 v1.3.79 |
-| 状态 | **active**；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游仍未给 `pool_unavailable` 带恢复时刻；`handle-protocol.mjs` 的上游改动在别处（`cache_continuity` 日志、cli-hop 缓存 TTL），自动合并 |
+| 状态 | **active，但实际效果与设计不符**（2026-09-30 线上数据：真熔断不带恢复时刻，只有上游"在途保护"带，且时间偏长，见下方「已知问题」）；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游仍未给 `pool_unavailable` 带恢复时刻；`handle-protocol.mjs` 的上游改动在别处（`cache_continuity` 日志、cli-hop 缓存 TTL），自动合并 |
 
 **动机**：quota_5h_safety 等额度熔断把账号摘出调度时，客户端只收到 503 `pool_unavailable`「号池当前没有可用账号」，无恢复时刻 → 客户端盲目重试刷日志。调度层其实已知恢复时刻（quota gate `detail.reset` / `temp_unschedulable_until`），但 quota 硬门早退（`return { ok:false }`）丢弃了它。
 
@@ -87,7 +87,22 @@ cd /opt/vm2api && docker compose restart
 
 **部署方式**：控制面改动随 fork 自建镜像发布（2026-09-29 起 tag 形如 `vm2api:v<基线>-fp<N>`，由 `docker-compose.override.yml` 的 `image:` 固定，见上方升级流程第 4 步）。
 
-**验证**：`node --test test/unit/errors-map.test.mjs`（21/21）+ pool 相关单测（190/190，2026-09-29 通过）；熔断期实测 503 应带 `retry-after` 头与 `details.reset_at`。
+**验证**：`node --test test/unit/errors-map.test.mjs`（21/21）+ pool 相关单测（190/190，2026-09-29 通过）；熔断期实测 503 应带 `retry-after` 头与 `details.reset_at`（2026-09-30 核实：线上熔断期从未满足，见下方「已知问题」）。
+
+**已知问题（2026-09-30 线上数据，未修）**：本补丁只在上游"在途保护"时生效，给出的恢复时刻还偏长几小时；真熔断反而不带恢复时刻。
+- **真熔断走不到本补丁**：`checkEligibility` 先调 `evaluateAccount`（`src/lib/pool/availability.mjs`）。它发现 `u5 >= limit_5h` 就直接返回 `{ ok:false, reason }`，不带恢复时刻，轮不到后面挂了本补丁的 `accountQuota.canAccept`。上游已拒（`headerHardBlocked`）同理。
+  - 证据：补丁 09-29 02:42 UTC 已上线，但 09-29 09:11–09:53 UTC 的 126 条熔断 503，以及 09-30 06:44 UTC 起的熔断 503，`error_message` 都只有 `no_eligible_accounts eligible=0`，没有 `soonest`。
+  - 所以客户端既没收到 `retry-after`，也没看到"预计…恢复"。
+- **能走到 `canAccept` 额度分支的，实际只剩"在途保护"**：上游 2e34da0（09-22）的 `safetyTripped`，在用量 ≥ 档位线 − 0.05、且账号有在途请求时拒绝，Max 档即 90% 起。
+  - 这种拦截在在途请求结束后就解除，本补丁却给它带上 5h 重置时刻。
+  - 例：09-30 06:31–06:33 UTC 的 6 条 503，`retry-after` 为 11,210–11,297 秒（约 3.1 小时），消息写"预计 09:40Z 恢复"，实际几分钟内就重新放行。
+- **单测没覆盖**：现有单测用 mock 的 quota gate 直接返回拒绝，没走 `evaluateAccount` 这条真实路径，所以当时没发现。
+- **修法（未排期，二选一）**：
+  1. 修正：
+     - `evaluateAccount` 的额度早退（`quota_5h_safety` / `quota_7d_safety` / `quota_*_header`）把 `until` 带成 `availableAt`；
+     - `canAccept` 的在途保护分支（`detail.utilization < limit`）不带恢复时刻；
+     - 补一条走真实 `evaluateAccount` 的调度层单测。
+  2. 下线本补丁，回到上游行为：503 一律不带恢复时刻。
 
 **合并注意**：上游若给 pool_unavailable 原生带 retryAfterSec/reset_at（查 `handle-protocol.mjs` 的 retryAfterSec 放行条件、`errors.mjs` 的 `poolClientError`），本补丁整条下线（下线即删除本四文件改动，回官方镜像）；rebase 冲突集中在 `selectionSnapshot` / quota gate / `poolClientError` 三处。
 
