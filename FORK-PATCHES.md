@@ -71,7 +71,7 @@ cd /opt/vm2api && docker compose restart
 | commit | `fork-patches` 分支（src/ 控制面改动，见分支 git log） |
 | 改动文件 | `src/lib/pool/pool-scheduler.mjs`、`src/lib/pool/failover-runner.mjs`、`src/lib/core/errors.mjs`、`src/lib/protocol/handle-protocol.mjs`；测试 `test/unit/fork-quota-retry-after.test.mjs`（fork 专用，2026-09-30 新增） |
 | 引入日期 | 2026-09-29，基线 v1.3.79；2026-09-30 修正（见下方「已知问题与修正」） |
-| 状态 | **active**；不提 PR，自维护。2026-09-30 线上数据证实初版效果与设计不符（真熔断不带恢复时刻，只有上游"在途保护"带，且时间偏长），同日修正，随 `vm2api:v1.3.85-fp7` 部署。2026-09-30 核对 v1.3.85：上游仍未给 `pool_unavailable` 带恢复时刻；`handle-protocol.mjs` 的上游改动在别处（`cache_continuity` 日志、cli-hop 缓存 TTL），自动合并 |
+| 状态 | **active**；不提 PR，自维护。2026-09-30 线上数据证实初版效果与设计不符（真熔断不带恢复时刻，只有上游"在途保护"带，且时间偏长），同日修正（`329af8c`），07:41 UTC 随 `vm2api:v1.3.85-fp7` 部署。线上验证（账号当时正处于 5h 真熔断）：503、`retry-after: 7083`、消息「号池当前没有可用账号（预计北京时间 09-30 17:40 恢复）」，通过；同期经 NewAPI 的真实请求也都带上了 `soonest`。在途保护场景要等下次用量到 90% 时观察（503 应不带 `soonest`）。2026-09-30 核对 v1.3.85：上游仍未给 `pool_unavailable` 带恢复时刻；`handle-protocol.mjs` 的上游改动在别处（`cache_continuity` 日志、cli-hop 缓存 TTL），自动合并 |
 
 **动机**：quota_5h_safety 等额度熔断把账号摘出调度时，客户端只收到 503 `pool_unavailable`「号池当前没有可用账号」，无恢复时刻 → 客户端盲目重试刷日志。调度层其实已知恢复时刻（quota gate `detail.reset` / `temp_unschedulable_until`），但 quota 硬门早退（`return { ok:false }`）丢弃了它。
 
