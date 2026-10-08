@@ -208,3 +208,24 @@ cd /opt/vm2api && docker compose restart
 **取舍**：真正卡死的请求要等最多 10 分钟才失败（原 3 分钟），期间占着一个并发席位。
 
 **合并注意**：上游若提供官方开关（kernel.json 字段、routing 配置或建槽环境变量），改用官方方式并下线本补丁（删掉 `.env` 里的 `KIN_JOB_IDLE_SECS` 后包装脚本自动恢复原样）。
+
+---
+
+## 补丁 7：official UA 重放剥掉 thinking-display-updates 门禁 token（active）
+
+| 项 | 值 |
+|---|---|
+| commit | `fork-patches` 分支 `fix(protocol): strip thinking-display-updates beta on official replay` |
+| 改动文件 | `src/lib/protocol/model-policy.mjs`（`applyBetaPolicyToHeader` 的 isOfficial 分支）；测试 `test/unit/fork-thinking-display-updates.test.mjs`（fork 专用，2026-10-08 新增） |
+| 引入日期 | 2026-10-08，基线 v1.3.124 |
+| 部署核销 | **2026-10-08 09:20 UTC 随 `vm2api:v1.3.124-fp2` 部署**：带门禁 token + `display=updates` 的复现 curl 由 400 变 200（opus-5-5）；verify-fixes A/C/D1/D2/K2/S PASS（B 维持已知 429 形态；K1/K2 各一次 529 为直连 SDK 高峰并发占满，非回归）。回滚：override `image:` 改回 `vm2api:v1.3.124-fp1` + `git reset --keep f9edab0d` + `up -d` |
+| 状态 | **active**；不提 PR，自维护 |
+
+**动机**：上游 v1.3.111 `dc670ba1` 修 `display=updates` 100% 502 的逻辑是「出站 anthropic-beta 没有 `thinking-display-updates-2026-08-18` 门禁 token 时把 display 降级为 omitted」（`thinking.mjs` `downgradeUngatedThinkingDisplay`）。但官方 UA 客户端（Claude Code 2.1.294+）的 beta 头经 `applyBetaPolicyToHeader` 的 isOfficial 分支原样透传（`ensureOauthBeta` 保留全部客户端 token），门禁 token 在 → 降级不生效；而订阅上游（OAuth）的 schema 只认 `summarized`/`omitted`，`updates` 必被 400 `thinking.adaptive.display: Input should be 'summarized', 'omitted'` 拒。即 v1.3.111 只覆盖了"不带 token 的客户端"（curl 冒烟路径），真实 CC 仍挂。2026-10-08 08:46 UTC 线上实证：直连 claude-cli 2.1.294 两条请求（opus-4-8 / opus-5-5）均 400 `upstream_invalid_request`；同期经 NewAPI 的流量不带该 display，不受影响。
+
+**改动**：`applyBetaPolicyToHeader` 的 isOfficial 分支在现有 context-1m 处理之前，无条件 `stripTokens(beta, [BETA_THINKING_DISPLAY_UPDATES])`。token 不在出站头里 → `downgradeUngatedThinkingDisplay` 自然把 body 的 `updates` 降级为 `omitted`，两处调用路径（cli-hop 与 sanitize 全清洗）同时受益；也避免槽内 CLI 看到门禁 token 后自行补 `display=updates`。只影响 OAuth 官方重放路径（API-key / setup-token 用固定表，本就不含该 token；非官方 mimicry 固定表也不含）。
+
+**验证**：`node --test test/unit/fork-thinking-display-updates.test.mjs`（6 条：剥 token 且保留其余客户端 token 与 oauth 补位、默认头不含、!pass 分支同剥、非官方 mimicry 不受影响、剥后降级生效、resolveCrsHeaders 端到端）。部署后复现验证：带 `anthropic-beta: …,thinking-display-updates-2026-08-18` + `thinking.display=updates` 的 curl 应由 400 变 200。
+
+**合并注意**：上游若把订阅上游的 updates 支持修好（即上游 API 接受 display=updates），或把降级条件改为「不看头只看池类型」，对照后下线本补丁。rebase 冲突点在 `applyBetaPolicyToHeader` 的 isOfficial 分支（上游若改该函数结构，注意保留这一行 strip）。
+>>>>>>> 2d15c279 (docs: patch 7 deployed as vm2api:v1.3.124-fp2 (2026-10-08 09:20 UTC), verified 400->200)
