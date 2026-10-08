@@ -9,12 +9,12 @@
 |---|---|
 | 上游 | `upstream` = github.com/dofastted/vm2api |
 | 补丁分支 | `fork-patches`（VPS `/opt/vm2api` 当前 checkout 的分支） |
-| 当前基线 | `v1.3.85`（`fork-patches` = v1.3.85 + 下表补丁；2026-09-30 由 v1.3.80 rebase，无冲突，结果与 `git merge-tree` 试合并的文件树逐字节一致） |
+| 当前基线 | `v1.3.123`（`fork-patches` = v1.3.123 + 补丁 3（保底部分）/4/5；2026-10-08 由 v1.3.85 rebase：补丁 1、2 上游已原生覆盖随之下线，补丁 3 的型号判定部分上游已重写随之下线、仅保留小 max_tokens 保底；rebase 前 HEAD 已打保护 tag `pre-rebase-13123-fp7`） |
 | 本地对应分支 | `fork-patches`（本机 clone 跟踪 `origin/fork-patches`；旧的 `fix/egress-self-loop` 已停用） |
 | 控制面镜像 | 自建，tag 形如 `vm2api:v<基线>-fp<N>`，由 `docker-compose.override.yml` 的 `image:` 固定（见下方流程第 4 步） |
 
 **升级上游新版本的流程（2026-09-29 修订）：**
-1. 本机：`git fetch upstream --tags && git fetch origin`，在 `fork-patches` 上 `git rebase v<X.Y.Z>`（冲突按下面各补丁节的「合并注意」处理）→ `npm ci && npm run test:unit` → `git push --force-with-lease origin fork-patches`。Windows 上有约 11 个与平台相关的既有失败测试文件（tar 备份、`/opt/vm2api` 路径映射、软链接、文件权限），以 VPS 上 Linux 容器跑的结果为准
+1. 本机：`git fetch upstream --tags && git fetch origin`，在 `fork-patches` 上 `git rebase v<X.Y.Z>`（冲突按下面各补丁节的「合并注意」处理）→ `npm ci && npm run test:unit` → `git push --force-with-lease origin fork-patches`。Windows 上有一批与平台相关的既有失败测试文件（tar 备份、`/opt/vm2api` 路径映射、软链接、文件权限、Unix socket 等；2026-10-08 在 v1.3.123 干净 tag 上实测 18 个文件失败，fork 分支不得比这个基线多），以 VPS 上 Linux 容器跑的结果为准
 2. VPS：先备份 `src/config/routing.json`（线上配置但受 git 跟踪），再 `cd /opt/vm2api && git fetch origin && git reset --keep origin/fork-patches`。**不要用 `--hard`**：会把线上 routing.json（健康探针间隔等）打回仓库版本；`--keep` 只更新两个提交之间有差异的文件，遇到冲突会中止
 3. 涉及 Go 二进制（`bin/kin-egress` 等）的补丁：按对应补丁节重编，替换 `bin/*.patched`
 4. 控制面：`docker build -t vm2api:v<X.Y.Z>-fp<N> .` → 把 `docker-compose.override.yml` 里 `services.vm2api.image` 改成该 tag → `docker compose up -d`。`.env` 的 `VM2API_IMAGE_TAG` 同步改成上游基线 tag（仅作回退参考）。**不要 `docker compose pull`**（override 里的本地 tag 不在任何仓库，pull 会报错）；回退官方镜像 = 删掉 override 的 `image:` 行 → `docker pull ghcr.io/dofastted/vm2api:v<X.Y.Z>` → `docker compose up -d`
@@ -24,14 +24,14 @@
 
 ---
 
-## 补丁 1：kin-egress 自回路守卫（active）
+## 补丁 1：kin-egress 自回路守卫（已下线，v1.3.123 上游已修）
 
 | 项 | 值 |
 |---|---|
 | commit | `fix/egress-self-loop` 分支 HEAD（VPS `fork-patches` 同名 commit） |
 | 改动文件 | `worker/internal/egress/server.go`、`worker/internal/egress/server_test.go` |
 | 引入日期 | 2026-09-22，基线 v1.3.21 |
-| 状态 | **active**；2026-09-30 再核对 v1.3.80→v1.3.85：`worker/`、`bin/` 零 diff（本区间只有 `share/wrap-cli/cli-node` 变），`bin/kin-egress.patched` 继续有效、无需重编；`vm2api:v1.3.85-fp6` 部署后 `KIN_EGRESS_BIN` 仍指向 `kin-egress.patched`。2026-09-29 再核对 v1.3.79→v1.3.80：`worker/`、`bin/`、`share/` 零 diff，`bin/kin-egress.patched` 继续有效、无需重编。此前核对：v1.3.74→v1.3.79 上游未动 `worker/internal/egress`（`server.go` 零 diff）、`bin/kin-egress` 未随 tag 变化，无需重编，`bin/kin-egress.patched`（v1.3.74 基线产物）继续有效；上游仍无 `loopsToSelf` 同类防护（`sameHostPort` 旧守卫不覆盖本回路），补丁保留；不提 PR，自维护 |
+| 状态 | **已下线（2026-10-08，基线 v1.3.123）**：上游 `handleTCP` 已原生拒绝自回路连接——`OriginalDst` 结果等于 `conn.LocalAddr().String()` 时拒绝转发并打 `refuse self-destined conn` 日志（上游注释描述的场景与本补丁根因一致：探测直连没有 REDIRECT 目标，转发会经本地 SOCKS 回拨自身形成放大回路）。直连探测时 LocalAddr 即被拨地址，守卫覆盖 waitListen 探测回路；`loopsToSelf` 不再随分支携带，本区间上游对 `server.go` 的改动（DNS 覆写等）不再有合并负担。**VPS 配套操作（下次部署时执行）**：`.env` 的 `KIN_EGRESS_BIN` 改回官方 `bin/kin-egress`（或删该行用默认值），`bin/kin-egress.patched` 可删除；今后升级不再需要重编 egress。历史核对记录：2026-09-30 v1.3.80→v1.3.85 `worker/`、`bin/` 零 diff；2026-09-29 v1.3.79→v1.3.80 零 diff；v1.3.74→v1.3.79 上游未动 egress |
 
 **根因**：控制面代理池每 10 分钟探测一次（`src/lib/vm/proxy-pool.mjs` 的 `probe_interval_min: 10`），`egressListening` 的 `waitListen` 会向 kin-egress 监听地址（如 `172.19.0.1:34722`）发起真实 TCP 连接探测存活性。kin-egress 的透明转发对"每个接受的连接"按其 OriginalDst 经 SOCKS5 转发——探测连接的 OriginalDst 就是监听地址本身，于是向 SOCKS 代理（vps-socks）发起 `CONNECT 172.19.0.1:34722`；代理回拨该地址再次被 kin-egress 接受并转发，形成自持放大回路：一条种子连接约 22 秒放大到 7500+ 次 SOCKS 拨号，约 30–60 秒内耗尽代理进程 65535 个 FD（`accept4: too many open files`），vps-socks 崩溃重启；回路随崩溃熄灭，10 分钟后下一次探测重新点燃——表现为 vps-socks 每 ~10 分钟崩溃一次的稳定周期。
 
@@ -64,14 +64,14 @@ cd /opt/vm2api && docker compose restart
 
 ---
 
-## 补丁 2：quota 熔断 503 带恢复时刻（quota-retry-after，active）
+## 补丁 2：quota 熔断 503 带恢复时刻（quota-retry-after，已下线，v1.3.123 上游已原生覆盖）
 
 | 项 | 值 |
 |---|---|
 | commit | `fork-patches` 分支（src/ 控制面改动，见分支 git log） |
 | 改动文件 | `src/lib/pool/pool-scheduler.mjs`、`src/lib/pool/failover-runner.mjs`、`src/lib/core/errors.mjs`、`src/lib/protocol/handle-protocol.mjs`；测试 `test/unit/fork-quota-retry-after.test.mjs`（fork 专用，2026-09-30 新增） |
 | 引入日期 | 2026-09-29，基线 v1.3.79；2026-09-30 修正（见下方「已知问题与修正」） |
-| 状态 | **active**；不提 PR，自维护。2026-09-30 线上数据证实初版效果与设计不符（真熔断不带恢复时刻，只有上游"在途保护"带，且时间偏长），同日修正（`329af8c`），07:41 UTC 随 `vm2api:v1.3.85-fp7` 部署。线上验证（账号当时正处于 5h 真熔断）：503、`retry-after: 7083`、消息「号池当前没有可用账号（预计北京时间 09-30 17:40 恢复）」，通过；同期经 NewAPI 的真实请求也都带上了 `soonest`。在途保护场景要等下次用量到 90% 时观察（503 应不带 `soonest`）。2026-09-30 核对 v1.3.85：上游仍未给 `pool_unavailable` 带恢复时刻；`handle-protocol.mjs` 的上游改动在别处（`cache_continuity` 日志、cli-hop 缓存 TTL），自动合并 |
+| 状态 | **已下线（2026-10-08，基线 v1.3.123）**：上游 pool 层已重写并原生覆盖本补丁目标——`pool-scheduler.mjs` 全链路 `retry_after_ms`（含 quota gate 的 `reset_at`、`planner.retryAfterMs`），`failover-runner.mjs` 的 503 原生带 `retryAfterSec`（planner 最早席位释放/最近恢复估计），`handle-protocol.mjs` 原生把 `retryAfterSec` 写成 `retry-after` 响应头，`errors.mjs` 原生解析上游 `Retry-After`；v1.3.94 起另有原生限额重置。本补丁四个源码文件改动与 fork 专用测试 `fork-quota-retry-after.test.mjs` 已随 rebase 移除。**注意**：上游 503 文案不含「预计北京时间 … 恢复」，`vm2api-deploy-*.sh verify` 对补丁 2 的该项预期需在下次部署前调整；上游真熔断（`no_eligible_accounts`）是否带精确窗口重置时刻，部署后实测确认。历史：2026-09-30 修正（`329af8c`）随 `vm2api:v1.3.85-fp7` 部署，真熔断 503 验证带 `retry-after: 7083` 与「预计北京时间 09-30 17:40 恢复」；详见下方记录 |
 
 **动机**：quota_5h_safety 等额度熔断把账号摘出调度时，客户端只收到 503 `pool_unavailable`「号池当前没有可用账号」，无恢复时刻 → 客户端盲目重试刷日志。调度层其实已知恢复时刻（quota gate `detail.reset` / `temp_unschedulable_until`），但 quota 硬门早退（`return { ok:false }`）丢弃了它。
 
@@ -126,26 +126,26 @@ cd /opt/vm2api && docker compose restart
 
 ---
 
-## 补丁 3：cli-hop 请求整形——对话中 system 的型号判定 + 小 max_tokens 保底（active）
+## 补丁 3：cli-hop 请求整形——小 max_tokens 保底（active；型号判定部分已于 v1.3.123 下线）
 
 | 项 | 值 |
 |---|---|
 | commit | `fork-patches` 分支 `fix(protocol): cli-hop mid-system models and small max_tokens floor` |
-| 改动文件 | `src/lib/protocol/anthropic-policy.mjs`（`modelSupportsMidConversationSystem`）、`src/lib/protocol/outbound-attempt.mjs`（`prepareCliHopBody` 保底 + `raiseCliHopMaxTokensForThinking`）、`test/unit/cli-hop-body.test.mjs` |
+| 改动文件 | `src/lib/protocol/outbound-attempt.mjs`（`prepareCliHopBody` 保底 + `raiseCliHopMaxTokensForThinking`）、`test/unit/cli-hop-body.test.mjs`、`test/unit/min-max-tokens.test.mjs`（上游用例按本补丁语义改预期） |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **active**（2026-09-29 09:55 UTC 随 `vm2api:v1.3.80-fp5` 部署；09-29 10:22 UTC 功能验证 A、C 通过）；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游 `modelSupportsMidConversationSystem` 与 `<= 64` 保底均未改，补丁保留；上游给 `prepareCliHopBody` 加了 `cacheTtl` 参数并在末尾调用 `applyMessageBreakpoints`，与本补丁改动的行不重叠，自动合并。2026-09-30 02:11 UTC 随 `vm2api:v1.3.85-fp6` 部署，复测 A、C PASS |
+| 状态 | **active（仅保底部分）**；不提 PR，自维护。2026-10-08 核对 v1.3.123：① 型号判定上游已重写（仅 Claude 5 系接受对话中 system；opus-4.8、fable-5 也判不支持），覆盖 A 部分场景（sonnet-4-6 → lift），A 部分下线、取上游实现，fork 判定表测试按上游语义重写；② 上游删除了自己的 `<= 64` 保底，新增 `auto_mode_classifier` 专用路径（`request-purpose.mjs` 的 `prepareClassifierBody`，原生校验预算并给 always-on thinking 加 2048 headroom，覆盖原 83x502 分类器场景）；③ 小预算保底上游没有，C 部分保留并落到新 `prepareCliHopBody`（保底在分类器早退之后、lift 之前；`raiseCliHopMaxTokensForThinking` 在 thinking 补全之后）；上游新用例「disabling the floor preserves the caller budget through cli-hop preparation」与本补丁语义冲突，预期按本补丁改为 1024 并注释；rebase 后 `cli-hop-body.test.mjs` 24/24、`min-max-tokens.test.mjs` 7/7 通过。历史：2026-09-29 随 `vm2api:v1.3.80-fp5` 部署，A、C 验证通过；2026-09-30 随 `v1.3.85-fp6` 复测 PASS |
 
 **动机（2026-09-29 复审，详见部署指南 §13 A/C 类）**：
 - A：`anthropic-policy.mjs` 的 `modelSupportsMidConversationSystem()` 只排除 haiku，但 Sonnet 4.6 也不接受 messages 里的 role=system。调用方 system 中 CLI 吸收不了的剩余部分被放成对话中 system 消息后，sonnet-4-6 请求上游秒拒、被判空 hop → 502 `incomplete_response`（线上 154/154）。v1.3.33 引入。
 - C：v1.3.70 新增的 `min_max_tokens`（默认 128）在入口先把 64 抬到 128，使 `prepareCliHopBody` 里「≤64 抬到 1024」的保护（v1.3.39）永远不触发；再叠加补上的 adaptive thinking + effort high，Claude Code auto 模式权限分类器（max_tokens=64）必撞 128 → CLI 致命错误 → 502（线上 83 条，客户端每次分类重试约 40 次）。
 
 **改动**：
-- A（`mid-system-models`）：`modelSupportsMidConversationSystem()` 对 haiku、`claude-3*`、Claude 4.x（4.8 除外）返回 false，走既有的 lift 路径（与 haiku 相同：把对话中 system 文本并入顶层 `system[]`）。两个调用点（cli-hop 整形、`sanitizeAnthropicBodyForBetaTokens`）同时生效。**取舍**：若有人把 sonnet-4-6 当主力跑多轮会话，每轮变化的提醒被挪进 `system[]`，缓存前缀会失效（v1.3.33 之前所有型号都是这样）；目前 sonnet-4-6 流量主要是标题生成等单轮小请求，可接受。以后要优化可改为就地转成 user 消息末尾的 `<system-reminder>`（注意 API 要求 tool_result 块排在 user 消息最前）。
+- A（`mid-system-models`，**2026-10-08 已下线**，v1.3.123 起取上游重写后的判定；以下为历史记录）：`modelSupportsMidConversationSystem()` 对 haiku、`claude-3*`、Claude 4.x（4.8 除外）返回 false，走既有的 lift 路径（与 haiku 相同：把对话中 system 文本并入顶层 `system[]`）。两个调用点（cli-hop 整形、`sanitizeAnthropicBodyForBetaTokens`）同时生效。**取舍**：若有人把 sonnet-4-6 当主力跑多轮会话，每轮变化的提醒被挪进 `system[]`，缓存前缀会失效（v1.3.33 之前所有型号都是这样）；目前 sonnet-4-6 流量主要是标题生成等单轮小请求，可接受。以后要优化可改为就地转成 user 消息末尾的 `<system-reminder>`（注意 API 要求 tool_result 块排在 user 消息最前）。
 - C（`cli-hop-min-tokens`）：cli-hop 小预算保底——`max_tokens < 1024` 一律抬到 1024（取代原 `<= 64` 判断，后者会被入口 `min_max_tokens` 的 128 抢先抬过阈值而失效）；补全 thinking 之后，若 thinking 为 adaptive/enabled 且 `max_tokens < 4096`，抬到 4096（思考也消耗 max_tokens）。只抬不降，按实际输出计费；缺省 max_tokens 仍由上游补 128000；入口 `min_max_tokens`（128）保持不动。
 
 **验证**：本机 `node --test test/unit/cli-hop-body.test.mjs` 22/22（新增 5 条：入口 128 地板 + cli-hop 串联、thinking 关闭与大预算不变、sonnet-4-6 lift、支持型号保留 role=system、型号判定表），相关协议单测 64/64。部署后：用 sonnet-4-6 发一条带非标准 system 的小请求应 200；用 sonnet-5 发 `max_tokens=64` 的请求，debug 日志 `outbound_body.max_tokens` 应为 4096 且 200。
 
-**合并注意**：上游若改了 `modelSupportsMidConversationSystem` 的判定（例如改成按 capability 表）或 `prepareCliHopBody` 的小预算保底（查 `<= 64`、`min_max_tokens`、`CLI_HOP_`），逐条对照后合并或下线；上游修掉任一问题即删除对应部分与测试。
+**合并注意**：只剩保底部分。上游若恢复 `prepareCliHopBody` 的小预算保底（查 `min_max_tokens`、`CLI_HOP_`、`max_output_tokens` 相关处理）或给分类器以外的 cli-hop 请求官方预算下限，对照后下线本补丁；上游再改 `prepareCliHopBody` 结构时注意保底插入点（`auto_mode_classifier` 早退之后）与 `raiseCliHopMaxTokensForThinking` 调用点（thinking 补全之后），以及 `min-max-tokens.test.mjs` 里按本补丁改过预期的用例。
 
 ---
 
@@ -156,7 +156,7 @@ cd /opt/vm2api && docker compose restart
 | commit | `fork-patches` 分支 `fix(transport): cli-hop output-cap stop and context-overflow 400` |
 | 改动文件 | `src/lib/transport/go-worker-client.mjs`、`test/unit/go-worker-client.test.mjs` |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **active / 部分生效**（部署同上；09-29 验证：D 通过；B 未生效，见下方「09-29 验证结论」）；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游未动 `go-worker-client.mjs`，也没处理撞上限 / 超长。随 `vm2api:v1.3.85-fp6` 部署后复测：D1、D2 PASS（用例需带一句 system，否则 v1.3.82 起无 system 的 haiku 会拒写长文、测不到上限），B 在新版 CLI 下仍是 502 `incomplete_response` |
+| 状态 | **active / 部分生效**（部署同上；09-29 验证：D 通过；B 未生效，见下方「09-29 验证结论」）；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游未动 `go-worker-client.mjs`，也没处理撞上限 / 超长。随 `vm2api:v1.3.85-fp6` 部署后复测：D1、D2 PASS（用例需带一句 system，否则 v1.3.82 起无 system 的 haiku 会拒写长文、测不到上限），B 在新版 CLI 下仍是 502 `incomplete_response`。2026-10-08 核对 v1.3.123：上游仍无撞上限 / 超长处理（`CONTEXT_OVERFLOW` 类关键字 grep 为空），rebase 自动合并无冲突；Windows 单测 11 过 22 跳过（Unix socket 流式用例须 Linux 跑），Linux 验证随下次部署执行 |
 
 **动机（部署指南 §13 B/D 类）**：
 - D：槽内 CLI 把 `stop_reason=max_tokens` 当致命错误（「Claude's response exceeded the N output token maximum」），vm2api 回 502 `upstream_error`；官方 API 语义是 200 + `stop_reason: max_tokens` + 已生成内容。客户端收到 502 只会原样重试、再烧一遍输出额度。
@@ -193,7 +193,7 @@ cd /opt/vm2api && docker compose restart
 | commit | `fork-patches` 分支 `fix(vm): configurable slot kernel job idle timeout` |
 | 改动文件 | `src/lib/vm/wrap-cli-runtime.mjs`（`wrapKernelWrapperScript` + `kernelEnvExports`）、`test/unit/wrap-cli-runtime.test.mjs`；运行配置 `.env`（不入库） |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **active**（2026-09-29 09:55 UTC 部署；`.env` 已设 `KIN_JOB_IDLE_SECS=600`、`KIN_STREAM_IDLE_TIMEOUT=660000`，kin-02 内核环境已核验）；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游仍硬编码 `idle_timeout_seconds: 180`，没有官方开关。随 `vm2api:v1.3.85-fp6` 部署后，`wrap-cli/sync` 重写的 kin-02 包装脚本与内核 1 号进程环境仍含 `KIN_JOB_IDLE_SECS=600` |
+| 状态 | **active**（2026-09-29 09:55 UTC 部署；`.env` 已设 `KIN_JOB_IDLE_SECS=600`、`KIN_STREAM_IDLE_TIMEOUT=660000`，kin-02 内核环境已核验）；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游仍硬编码 `idle_timeout_seconds: 180`，没有官方开关。随 `vm2api:v1.3.85-fp6` 部署后，`wrap-cli/sync` 重写的 kin-02 包装脚本与内核 1 号进程环境仍含 `KIN_JOB_IDLE_SECS=600`。2026-10-08 核对 v1.3.123：上游仍无官方开关（`wrap-cli-runtime.mjs` 无可配置项），本补丁文件与上游零重叠、干净应用，fork 单测通过 |
 
 **动机（部署指南 §13 E 类）**：控制面 `KIN_STREAM_IDLE_TIMEOUT` 与槽内核 job 看门狗默认都是 180s 无帧即杀。超大单轮输出（43K–48K token、6–9 分钟）中出现 >180s 的静默段（最可能是 `display: omitted` 的思考）就被杀成 504 `worker_timeout`；09-29 同一请求 14 次尝试里 12 次失败。
 
