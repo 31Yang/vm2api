@@ -13,7 +13,7 @@ import {
   alignSamplingWithThinking,
   modelSupportsMidConversationSystem,
 } from './anthropic-policy.mjs'
-import { liftMidConversationSystemMessages } from './sanitize.mjs'
+import { liftMidConversationSystemMessages, STABILIZED_CONTEXT_BUDGET } from './sanitize.mjs'
 import { ensureUnofficialAdaptiveThinking, ensureUnofficialEffortHigh, normalizeThinkingForModel } from './thinking.mjs'
 import { ensureOutputConfigSchema } from './request-rectifier.mjs'
 import {
@@ -82,7 +82,7 @@ export function stripCliOwnedSystem(system) {
 }
 
 /** Official Claude Code 2.1.278 context block. A live counter here changes the cached prefix. */
-const OFFICIAL_CONTEXT_BUDGET = '<total_tokens>15000000 tokens left</total_tokens>'
+const OFFICIAL_CONTEXT_BUDGET = STABILIZED_CONTEXT_BUDGET
 const VOLATILE_CONTEXT_BUDGET = /<total_tokens>\d+ tokens left<\/total_tokens>/g
 
 function stabilizeOfficialContextBudget(text) {

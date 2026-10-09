@@ -268,10 +268,57 @@ export function normalizeAnthropicMessages(body, { keepMidConversationSystem = t
   return body
 }
 
+/**
+ * Fork patch (lift-budget-stabilize): Claude Code appends a live
+ * `<total_tokens>N tokens left</total_tokens>` role=system reminder every turn and
+ * keeps the whole reminder history. For models gated out of
+ * mid-conversation-system (Claude 4.x) the lift below moves every reminder into
+ * top-level system[], so the array grows one block per turn and the newest block
+ * carries a fresh counter — any cache breakpoint at or after the lifted blocks
+ * lands on a different prefix each turn, reads collapse back to the pre-lift
+ * system head, and the whole message list is rewritten at 1h TTL (observed
+ * 2026-10-09, opus-4-8 via rust-kernel: reads pinned at ~52k, ~85k tokens/turn
+ * rewritten, hit rate 37-46% vs ~95% on 5-series). Pin the counter to the
+ * official constant and keep only the first pure budget block so the lifted
+ * system[] is turn-invariant and messages stay append-only, matching the
+ * 5-series cache shape.
+ */
+export const STABILIZED_CONTEXT_BUDGET = '<total_tokens>15000000 tokens left</total_tokens>'
+const VOLATILE_CONTEXT_BUDGET = /<total_tokens>\d+ tokens left<\/total_tokens>/g
+
+function stabilizeLiftedBudgetBlocks(system) {
+  if (typeof system === 'string') {
+    return system.includes('<total_tokens>') ? system.replace(VOLATILE_CONTEXT_BUDGET, STABILIZED_CONTEXT_BUDGET) : system
+  }
+  if (!Array.isArray(system)) return system
+  let seenBudget = false
+  let changed = false
+  const blocks = []
+  for (const block of system) {
+    if (!block || typeof block !== 'object' || typeof block.text !== 'string' || !block.text.includes('<total_tokens>')) {
+      blocks.push(block)
+      continue
+    }
+    const text = block.text.replace(VOLATILE_CONTEXT_BUDGET, STABILIZED_CONTEXT_BUDGET)
+    if (text.trim() === STABILIZED_CONTEXT_BUDGET) {
+      if (seenBudget) {
+        changed = true
+        continue
+      }
+      seenBudget = true
+    }
+    if (text !== block.text) changed = true
+    blocks.push(text === block.text ? block : { ...block, text })
+  }
+  return changed ? blocks : system
+}
+
 /** Haiku / hops without mid-conversation-system: lift leftover role=system into top-level system. */
 export function liftMidConversationSystemMessages(body) {
   if (!body || !Array.isArray(body.messages)) return body
-  return normalizeAnthropicMessages({ ...body, messages: body.messages.slice() }, { keepMidConversationSystem: false })
+  const lifted = normalizeAnthropicMessages({ ...body, messages: body.messages.slice() }, { keepMidConversationSystem: false })
+  const system = stabilizeLiftedBudgetBlocks(lifted.system)
+  return system === lifted.system ? lifted : { ...lifted, system }
 }
 
 function contentToPlainText(content) {
