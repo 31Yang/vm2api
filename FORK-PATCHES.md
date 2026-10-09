@@ -9,7 +9,7 @@
 |---|---|
 | 上游 | `upstream` = github.com/dofastted/vm2api |
 | 补丁分支 | `fork-patches`（VPS `/opt/vm2api` 当前 checkout 的分支） |
-| 当前基线 | `v1.3.124`（`fork-patches` = v1.3.124 + 补丁 3（保底部分）/4/5；2026-10-08 同日两级 rebase：v1.3.85→v1.3.123（补丁 1、2 上游已原生覆盖随之下线，补丁 3 型号判定部分上游已重写随之下线、仅保留小 max_tokens 保底；保护 tag `pre-rebase-13123-fp7`）→v1.3.124（拦截/蒸馏误报收敛，与 3 个 active 补丁零重叠、干净 rebase；保护 tag `pre-rebase-13124-fp1`）） |
+| 当前基线 | `v1.3.131`（`fork-patches` = v1.3.131 + 补丁 3（保底部分）/4；2026-10-09 rebase：补丁 5（上游 v1.3.126 原生 `failover.stream_idle_timeout_ms` + 启动脚本导出 `JOB_IDLE_SECS`，且证实 `KIN_JOB_IDLE_SECS` 从未生效）与补丁 7（上游 v1.3.125 `withRequestProtocolBetas` 管线重写，本补丁 strip 被架空成空操作）随之下线；冲突 2 处均按「取上游、留保底/留错误语义」解决；fork 专项单测全过（cli-hop-body 24/24、min-max-tokens 7/7、go-worker-client 11 过 22 跳过须 Linux 补跑、wrap-cli-runtime 17/18 唯一失败为上游 Windows 权限用例）；全套 194 文件失败清单与纯净 v1.3.131 基线（21 个平台失败、55 条 not-ok）逐项比对**完全一致、零回归**；保护 tag `pre-rebase-13131-fp2`；**待部署**，清单见部署指南 §12。历史基线：v1.3.124（2026-10-08 同日两级 rebase 并部署至 `vm2api:v1.3.124-fp2`，保护 tag `pre-rebase-13123-fp7` / `pre-rebase-13124-fp1`） |
 | 本地对应分支 | `fork-patches`（本机 clone 跟踪 `origin/fork-patches`；旧的 `fix/egress-self-loop` 已停用） |
 | 控制面镜像 | 自建，tag 形如 `vm2api:v<基线>-fp<N>`，由 `docker-compose.override.yml` 的 `image:` 固定（见下方流程第 4 步） |
 
@@ -133,7 +133,7 @@ cd /opt/vm2api && docker compose restart
 | commit | `fork-patches` 分支 `fix(protocol): cli-hop mid-system models and small max_tokens floor` |
 | 改动文件 | `src/lib/protocol/outbound-attempt.mjs`（`prepareCliHopBody` 保底 + `raiseCliHopMaxTokensForThinking`）、`test/unit/cli-hop-body.test.mjs`、`test/unit/min-max-tokens.test.mjs`（上游用例按本补丁语义改预期） |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **active（仅保底部分）**；不提 PR，自维护。2026-10-08 核对 v1.3.123：① 型号判定上游已重写（仅 Claude 5 系接受对话中 system；opus-4.8、fable-5 也判不支持），覆盖 A 部分场景（sonnet-4-6 → lift），A 部分下线、取上游实现，fork 判定表测试按上游语义重写；② 上游删除了自己的 `<= 64` 保底，新增 `auto_mode_classifier` 专用路径（`request-purpose.mjs` 的 `prepareClassifierBody`，原生校验预算并给 always-on thinking 加 2048 headroom，覆盖原 83x502 分类器场景）；③ 小预算保底上游没有，C 部分保留并落到新 `prepareCliHopBody`（保底在分类器早退之后、lift 之前；`raiseCliHopMaxTokensForThinking` 在 thinking 补全之后）；上游新用例「disabling the floor preserves the caller budget through cli-hop preparation」与本补丁语义冲突，预期按本补丁改为 1024 并注释；rebase 后 `cli-hop-body.test.mjs` 24/24、`min-max-tokens.test.mjs` 7/7 通过。2026-10-08 核对 v1.3.124：上游未动 cli-hop 相关文件，干净 rebase，两测试文件仍全过。历史：2026-09-29 随 `vm2api:v1.3.80-fp5` 部署，A、C 验证通过；2026-09-30 随 `v1.3.85-fp6` 复测 PASS |
+| 状态 | **active（仅保底部分）**；不提 PR，自维护。2026-10-08 核对 v1.3.123：① 型号判定上游已重写（仅 Claude 5 系接受对话中 system；opus-4.8、fable-5 也判不支持），覆盖 A 部分场景（sonnet-4-6 → lift），A 部分下线、取上游实现，fork 判定表测试按上游语义重写；② 上游删除了自己的 `<= 64` 保底，新增 `auto_mode_classifier` 专用路径（`request-purpose.mjs` 的 `prepareClassifierBody`，原生校验预算并给 always-on thinking 加 2048 headroom，覆盖原 83x502 分类器场景）；③ 小预算保底上游没有，C 部分保留并落到新 `prepareCliHopBody`（保底在分类器早退之后、lift 之前；`raiseCliHopMaxTokensForThinking` 在 thinking 补全之后）；上游新用例「disabling the floor preserves the caller budget through cli-hop preparation」与本补丁语义冲突，预期按本补丁改为 1024 并注释；rebase 后 `cli-hop-body.test.mjs` 24/24、`min-max-tokens.test.mjs` 7/7 通过。2026-10-08 核对 v1.3.124：上游未动 cli-hop 相关文件，干净 rebase，两测试文件仍全过。2026-10-09 核对 v1.3.131：上游改了同文件 `pinHaikuCliThinking`（haiku-5.5 豁免 thinking 禁用）与 `prepareOutboundEnvelope`（接入 `withRequestProtocolBetas`），与保底插入点相邻产生一处冲突，按「保底保留 + 取上游新版注释/函数」解决；`cli-hop-body` 24/24、`min-max-tokens` 7/7 通过。历史：2026-09-29 随 `vm2api:v1.3.80-fp5` 部署，A、C 验证通过；2026-09-30 随 `v1.3.85-fp6` 复测 PASS |
 
 **动机（2026-09-29 复审，详见部署指南 §13 A/C 类）**：
 - A：`anthropic-policy.mjs` 的 `modelSupportsMidConversationSystem()` 只排除 haiku，但 Sonnet 4.6 也不接受 messages 里的 role=system。调用方 system 中 CLI 吸收不了的剩余部分被放成对话中 system 消息后，sonnet-4-6 请求上游秒拒、被判空 hop → 502 `incomplete_response`（线上 154/154）。v1.3.33 引入。
@@ -156,7 +156,7 @@ cd /opt/vm2api && docker compose restart
 | commit | `fork-patches` 分支 `fix(transport): cli-hop output-cap stop and context-overflow 400` |
 | 改动文件 | `src/lib/transport/go-worker-client.mjs`、`test/unit/go-worker-client.test.mjs` |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **active / 部分生效**（部署同上；09-29 验证：D 通过；B 未生效，见下方「09-29 验证结论」）；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游未动 `go-worker-client.mjs`，也没处理撞上限 / 超长。随 `vm2api:v1.3.85-fp6` 部署后复测：D1、D2 PASS（用例需带一句 system，否则 v1.3.82 起无 system 的 haiku 会拒写长文、测不到上限），B 在新版 CLI 下仍是 502 `incomplete_response`。2026-10-08 核对 v1.3.123：上游仍无撞上限 / 超长处理（`CONTEXT_OVERFLOW` 类关键字 grep 为空），rebase 自动合并无冲突；Windows 单测 11 过 22 跳过（Unix socket 流式用例须 Linux 跑），Linux 验证随下次部署执行。2026-10-08 核对 v1.3.124：上游未动 `go-worker-client.mjs` / `outbound-attempt.mjs`，干净 rebase |
+| 状态 | **active / 部分生效**（部署同上；09-29 验证：D 通过；B 未生效，见下方「09-29 验证结论」）；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游未动 `go-worker-client.mjs`，也没处理撞上限 / 超长。随 `vm2api:v1.3.85-fp6` 部署后复测：D1、D2 PASS（用例需带一句 system，否则 v1.3.82 起无 system 的 haiku 会拒写长文、测不到上限），B 在新版 CLI 下仍是 502 `incomplete_response`。2026-10-08 核对 v1.3.123：上游仍无撞上限 / 超长处理（`CONTEXT_OVERFLOW` 类关键字 grep 为空），rebase 自动合并无冲突；Windows 单测 11 过 22 跳过（Unix socket 流式用例须 Linux 跑），Linux 验证随下次部署执行。2026-10-08 核对 v1.3.124：上游未动 `go-worker-client.mjs` / `outbound-attempt.mjs`，干净 rebase。2026-10-09 核对 v1.3.131：上游只改了 `finalizeWorkerPayload` 的 beta 处理（`downgradeUngatedThinkingDisplay` 调用替换为 `withRequestProtocolBetas` + body `betas` 通道），与本补丁的流式错误语义区域零重叠、干净合并；上游未自己处理撞上限 / 超长（`CONTEXT_OVERFLOW` 类关键字 grep 仍为空）；Windows 单测 11 过 22 跳过（Unix socket 流式用例须部署后 Linux 补跑） |
 
 **动机（部署指南 §13 B/D 类）**：
 - D：槽内 CLI 把 `stop_reason=max_tokens` 当致命错误（「Claude's response exceeded the N output token maximum」），vm2api 回 502 `upstream_error`；官方 API 语义是 200 + `stop_reason: max_tokens` + 已生成内容。客户端收到 502 只会原样重试、再烧一遍输出额度。
@@ -186,14 +186,14 @@ cd /opt/vm2api && docker compose restart
 
 ---
 
-## 补丁 5：空闲看门狗 180s → 600s（active）
+## 补丁 5：空闲看门狗 180s → 600s（已下线，v1.3.126 上游原生覆盖）
 
 | 项 | 值 |
 |---|---|
 | commit | `fork-patches` 分支 `fix(vm): configurable slot kernel job idle timeout` |
 | 改动文件 | `src/lib/vm/wrap-cli-runtime.mjs`（`wrapKernelWrapperScript` + `kernelEnvExports`）、`test/unit/wrap-cli-runtime.test.mjs`；运行配置 `.env`（不入库） |
 | 引入日期 | 2026-09-29，基线 v1.3.80 |
-| 状态 | **active**（2026-09-29 09:55 UTC 部署；`.env` 已设 `KIN_JOB_IDLE_SECS=600`、`KIN_STREAM_IDLE_TIMEOUT=660000`，kin-02 内核环境已核验）；不提 PR，自维护。2026-09-30 核对 v1.3.85：上游仍硬编码 `idle_timeout_seconds: 180`，没有官方开关。随 `vm2api:v1.3.85-fp6` 部署后，`wrap-cli/sync` 重写的 kin-02 包装脚本与内核 1 号进程环境仍含 `KIN_JOB_IDLE_SECS=600`。2026-10-08 核对 v1.3.123：上游仍无官方开关（`wrap-cli-runtime.mjs` 无可配置项），本补丁文件与上游零重叠、干净应用，fork 单测通过。2026-10-08 核对 v1.3.124：同样零重叠（上游 `wrap-cli-runtime.mjs` 无 diff），唯一失败仍为上游 Windows 权限用例 |
+| 状态 | **已下线（2026-10-09，基线 v1.3.131）**：上游 v1.3.126 原生实现且更完善——面板「重试与切号 → 流空闲超时」可配（`failover.stream_idle_timeout_ms`，默认 180s，范围 30s–60min，未配置时用 `KIN_STREAM_IDLE_TIMEOUT` 兜底），网关、`kernel.json`/`worker.json` 的 `idle_timeout_seconds` 与内核 job 看门狗共用同一值；保存后热写各槽 `kernel.json`，运行中的内核空闲时自动重启读取新看门狗值。**重要更正**：上游确认内核看门狗读的是不带前缀的 `JOB_IDLE_SECS`，本补丁导出的 `KIN_JOB_IDLE_SECS` 从未被内核读取——线上实际只有控制面 `KIN_STREAM_IDLE_TIMEOUT=660000` 那一半在生效，槽内核看门狗一直是 180s。rebase 时整个补丁 commit 丢弃，`wrapKernelWrapperScript` 取上游版（启动脚本从 `kernel.json` 读出并导出 `JOB_IDLE_SECS`），fork 测试改动同步移除。**VPS 配套操作（随 v1.3.131 部署执行）**：部署后 `PUT /api/panel/routing` 设 `{"failover":{"stream_idle_timeout_ms":660000}}` 显式接替补丁语义（热写各槽 kernel.json + 空闲内核自动重启；不设则由 `.env` 的 `KIN_STREAM_IDLE_TIMEOUT=660000` 兜底，数值效果相同）；`.env` 的 `KIN_JOB_IDLE_SECS=600` 行可删（上游不读，留着无害）；本次必须 `wrap-cli/sync`（v1.3.125 cli-node 与 v1.3.126 kin-kernel 启动脚本均变）。部署后验证改为：`docker exec kin-02 sh -c 'tr "\0" "\n" < /proc/1/environ | grep JOB_IDLE_SECS'` 应输出 660。可选：上游新增 `failover.eager_tool_streaming`（默认关）治长 Write 整段缓冲导致的静默段，先保持默认，504 复发再开 |
 
 **动机（部署指南 §13 E 类）**：控制面 `KIN_STREAM_IDLE_TIMEOUT` 与槽内核 job 看门狗默认都是 180s 无帧即杀。超大单轮输出（43K–48K token、6–9 分钟）中出现 >180s 的静默段（最可能是 `display: omitted` 的思考）就被杀成 504 `worker_timeout`；09-29 同一请求 14 次尝试里 12 次失败。
 
@@ -207,11 +207,11 @@ cd /opt/vm2api && docker compose restart
 
 **取舍**：真正卡死的请求要等最多 10 分钟才失败（原 3 分钟），期间占着一个并发席位。
 
-**合并注意**：上游若提供官方开关（kernel.json 字段、routing 配置或建槽环境变量），改用官方方式并下线本补丁（删掉 `.env` 里的 `KIN_JOB_IDLE_SECS` 后包装脚本自动恢复原样）。
+**合并注意（已触发下线）**：上游 v1.3.126 已提供官方开关（`failover.stream_idle_timeout_ms` + 启动脚本导出 `JOB_IDLE_SECS`），本补丁已按本条下线；上方动机/改动/生效步骤/验证段落为历史留档。
 
 ---
 
-## 补丁 7：official UA 重放剥掉 thinking-display-updates 门禁 token（active）
+## 补丁 7：official UA 重放剥掉 thinking-display-updates 门禁 token（已下线，v1.3.125 上游管线重写后失效）
 
 | 项 | 值 |
 |---|---|
@@ -219,7 +219,7 @@ cd /opt/vm2api && docker compose restart
 | 改动文件 | `src/lib/protocol/model-policy.mjs`（`applyBetaPolicyToHeader` 的 isOfficial 分支）；测试 `test/unit/fork-thinking-display-updates.test.mjs`（fork 专用，2026-10-08 新增） |
 | 引入日期 | 2026-10-08，基线 v1.3.124 |
 | 部署核销 | **2026-10-08 09:20 UTC 随 `vm2api:v1.3.124-fp2` 部署**：带门禁 token + `display=updates` 的复现 curl 由 400 变 200（opus-5-5）；verify-fixes A/C/D1/D2/K2/S PASS（B 维持已知 429 形态；K1/K2 各一次 529 为直连 SDK 高峰并发占满，非回归）。回滚：override `image:` 改回 `vm2api:v1.3.124-fp1` + `git reset --keep f9edab0d` + `up -d` |
-| 状态 | **active**；不提 PR，自维护 |
+| 状态 | **已下线（2026-10-09，基线 v1.3.131）**：上游 v1.3.125 重写 beta 管线（#296/#297）——`withRequestProtocolBetas` 在 body 带 `display=updates` 时**无条件加回门禁 token**，门控经 body `betas` 通道交给槽内 CLI 构造真实请求头，且明确「不删除合法字段或换成 summarized」。所有降级判定点（`finalizeWorkerPayload` 两个分支、`prepareOutboundEnvelope`）读的都是已被重新加 token 的头，本补丁的 strip 成为空操作，rebase 时随 commit 一并丢弃（fork 测试文件 `fork-thinking-display-updates.test.mjs` 同步删除）。**根因重述**：v1.3.124 时代的 400 是槽内 CLI 用存储指纹的固定 beta 表（不含门禁 token）发 `display=updates` 所致；现在门禁 token 随请求下发、SDK 出站指纹对齐 0.128.0，订阅上游是否已接受 gated updates 源码无法证明，**须部署后实测**（带 `anthropic-beta: …,thinking-display-updates-2026-08-18` + `thinking.display=updates` 的 curl 应为 200）。若仍 400，需新补丁：cli-hop body 无条件把 `updates` 降级为 `omitted`（在 `finalizeWorkerPayload` 的 cliHop 分支重新引入 `downgradeUngatedThinkingDisplay`），并复跑本节验证 |
 
 **动机**：上游 v1.3.111 `dc670ba1` 修 `display=updates` 100% 502 的逻辑是「出站 anthropic-beta 没有 `thinking-display-updates-2026-08-18` 门禁 token 时把 display 降级为 omitted」（`thinking.mjs` `downgradeUngatedThinkingDisplay`）。但官方 UA 客户端（Claude Code 2.1.294+）的 beta 头经 `applyBetaPolicyToHeader` 的 isOfficial 分支原样透传（`ensureOauthBeta` 保留全部客户端 token），门禁 token 在 → 降级不生效；而订阅上游（OAuth）的 schema 只认 `summarized`/`omitted`，`updates` 必被 400 `thinking.adaptive.display: Input should be 'summarized', 'omitted'` 拒。即 v1.3.111 只覆盖了"不带 token 的客户端"（curl 冒烟路径），真实 CC 仍挂。2026-10-08 08:46 UTC 线上实证：直连 claude-cli 2.1.294 两条请求（opus-4-8 / opus-5-5）均 400 `upstream_invalid_request`；同期经 NewAPI 的流量不带该 display，不受影响。
 
@@ -227,5 +227,5 @@ cd /opt/vm2api && docker compose restart
 
 **验证**：`node --test test/unit/fork-thinking-display-updates.test.mjs`（6 条：剥 token 且保留其余客户端 token 与 oauth 补位、默认头不含、!pass 分支同剥、非官方 mimicry 不受影响、剥后降级生效、resolveCrsHeaders 端到端）。部署后复现验证：带 `anthropic-beta: …,thinking-display-updates-2026-08-18` + `thinking.display=updates` 的 curl 应由 400 变 200。
 
-**合并注意**：上游若把订阅上游的 updates 支持修好（即上游 API 接受 display=updates），或把降级条件改为「不看头只看池类型」，对照后下线本补丁。rebase 冲突点在 `applyBetaPolicyToHeader` 的 isOfficial 分支（上游若改该函数结构，注意保留这一行 strip）。
+**合并注意（历史留档）**：本节动机/改动/验证三段为 v1.3.124 基线时的记录。补丁已随 v1.3.131 rebase 下线（原因见状态行）；若部署后实测订阅上游仍拒 gated `updates`，按状态行末尾的方案另立新补丁，不要复活本补丁（strip 头在新管线里无效）。
 >>>>>>> 2d15c279 (docs: patch 7 deployed as vm2api:v1.3.124-fp2 (2026-10-08 09:20 UTC), verified 400->200)
