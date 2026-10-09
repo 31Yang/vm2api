@@ -9,7 +9,7 @@
 |---|---|
 | 上游 | `upstream` = github.com/dofastted/vm2api |
 | 补丁分支 | `fork-patches`（VPS `/opt/vm2api` 当前 checkout 的分支） |
-| 当前基线 | `v1.3.131`（`fork-patches` = v1.3.131 + 补丁 3（保底部分）/4；2026-10-09 rebase：补丁 5（上游 v1.3.126 原生 `failover.stream_idle_timeout_ms` + 启动脚本导出 `JOB_IDLE_SECS`，且证实 `KIN_JOB_IDLE_SECS` 从未生效）与补丁 7（上游 v1.3.125 `withRequestProtocolBetas` 管线重写，本补丁 strip 被架空成空操作）随之下线；冲突 2 处均按「取上游、留保底/留错误语义」解决；fork 专项单测全过（cli-hop-body 24/24、min-max-tokens 7/7、go-worker-client 11 过 22 跳过须 Linux 补跑、wrap-cli-runtime 17/18 唯一失败为上游 Windows 权限用例）；全套 194 文件失败清单与纯净 v1.3.131 基线（21 个平台失败、55 条 not-ok）逐项比对**完全一致、零回归**；保护 tag `pre-rebase-13131-fp2`；**待部署**，清单见部署指南 §12。历史基线：v1.3.124（2026-10-08 同日两级 rebase 并部署至 `vm2api:v1.3.124-fp2`，保护 tag `pre-rebase-13123-fp7` / `pre-rebase-13124-fp1`） |
+| 当前基线 | `v1.3.133`（`fork-patches` = v1.3.133 + 补丁 3（保底部分）/4/8；2026-10-09 升级：github.com:443 当时不通，经 api.github.com tarball 导入为合成提交 `30b647d6`（真实上游 commit 前缀 `e959e40`，父提交是真 tag v1.3.131，网络恢复后 fetch 到的真 v1.3.133 与之树相同、可无损对账）；1.3.132 控制台加「文档」链接 + README/RISK.md 写明拦截顺序，1.3.133 遥测开关派生化（`seed_policy.telemetry_disabled` 单源），均为控制面 + web/dist 改动、无迁移、二进制不变、不必 wrap-cli/sync；与补丁 3/4/8 零文件重叠，干净 rebase；补丁 8 新增单测 5 条随 `sanitize.test.mjs` 20/20 通过；全套 194 文件失败清单与纯净 v1.3.133 基线（17 个平台失败文件）逐项比对**完全一致、零回归**；保护 tag `pre-rebase-13133-fp1`）。历史基线：v1.3.131（2026-10-09 rebase 并部署 `vm2api:v1.3.131-fp1`：补丁 5（上游 v1.3.126 原生 `failover.stream_idle_timeout_ms` + 启动脚本导出 `JOB_IDLE_SECS`，且证实 `KIN_JOB_IDLE_SECS` 从未生效）与补丁 7（上游 v1.3.125 `withRequestProtocolBetas` 管线重写，本补丁 strip 被架空成空操作）随之下线；保护 tag `pre-rebase-13131-fp2`）、v1.3.124（2026-10-08，保护 tag `pre-rebase-13123-fp7` / `pre-rebase-13124-fp1`） |
 | 本地对应分支 | `fork-patches`（本机 clone 跟踪 `origin/fork-patches`；旧的 `fix/egress-self-loop` 已停用） |
 | 控制面镜像 | 自建，tag 形如 `vm2api:v<基线>-fp<N>`，由 `docker-compose.override.yml` 的 `image:` 固定（见下方流程第 4 步） |
 
@@ -228,4 +228,25 @@ cd /opt/vm2api && docker compose restart
 **验证**：`node --test test/unit/fork-thinking-display-updates.test.mjs`（6 条：剥 token 且保留其余客户端 token 与 oauth 补位、默认头不含、!pass 分支同剥、非官方 mimicry 不受影响、剥后降级生效、resolveCrsHeaders 端到端）。部署后复现验证：带 `anthropic-beta: …,thinking-display-updates-2026-08-18` + `thinking.display=updates` 的 curl 应由 400 变 200。
 
 **合并注意（历史留档）**：本节动机/改动/验证三段为 v1.3.124 基线时的记录。补丁已随 v1.3.131 rebase 下线（原因见状态行）；若部署后实测订阅上游仍拒 gated `updates`，按状态行末尾的方案另立新补丁，不要复活本补丁（strip 头在新管线里无效）。
->>>>>>> 2d15c279 (docs: patch 7 deployed as vm2api:v1.3.124-fp2 (2026-10-08 09:20 UTC), verified 400->200)
+
+---
+
+## 补丁 8：lift 路径 total_tokens 提醒钉常量 + 去重（lift-budget-stabilize，active）
+
+| 项 | 值 |
+|---|---|
+| commit | `fork-patches` 分支 `fix(protocol): stabilize lifted total_tokens budget blocks (fork patch 8)` |
+| 改动文件 | `src/lib/protocol/sanitize.mjs`（`STABILIZED_CONTEXT_BUDGET` 导出 + `stabilizeLiftedBudgetBlocks` + `liftMidConversationSystemMessages` 后处理）、`src/lib/protocol/outbound-attempt.mjs`（`OFFICIAL_CONTEXT_BUDGET` 改引用同一常量，行为不变）、`test/unit/sanitize.test.mjs`（新增 5 条） |
+| 引入日期 | 2026-10-09，基线 v1.3.133 |
+| 状态 | **active**；不提 PR/issue，自维护 |
+
+**根因（2026-10-09 线上排查，只读取证）**：Claude Code 2.1.294+ 对 opus-4-8 启用 `mid-conversation-system` beta，每轮往 `messages[]` 末尾追加一条 `role:"system"` 的 `<total_tokens>N tokens left</total_tokens>` 实时额度提醒，历史提醒全保留。opus-4-8 不匹配 `modelSupportsMidConversationSystem()` 的 5 系正则（上游有意：4.x 对话内 system 被 Anthropic 秒拒 400）→ `sanitizeAnthropicBodyForBetaTokens` 走 `liftMidConversationSystemMessages`，把所有提醒搬进顶层 `system[]`。搬移后 `system[]` 每轮多一块、最新块带实时数值，其后的缓存断点每轮落在不同前缀上 → 缓存读坍缩回 lift 前的系统头（实测钉在 ~52k），全部 messages 每轮以 1h TTL 全量重写。实测 opus-4-8 直连（rust-kernel 路径）250 条命中率 45.9%、1h 写 21.3M token（$212.61），同期 sonnet-5 134 条命中 95.2%（$5.78）。5 系不受影响：提醒原样留在 messages 尾部，前缀只增不减。cli-hop 路径有 `stabilizeSystemBudget`/`stabilizeMessageBudgets` 钉值（`prepareCliHopBody`），但 rust-kernel HTTP 直连路径（`prepareOutboundAttempt` → `prepareOutboundEnvelope` 末尾的 `sanitizeAnthropicBodyForBetaTokens`）没有这一步骤，用户直连走的正是后者。
+
+**改动**：`liftMidConversationSystemMessages`  lift 之后对 `system` 跑 `stabilizeLiftedBudgetBlocks`：
+1. 所有文本里的 `<total_tokens>\d+ tokens left</total_tokens>` 替换为官方常量 `<total_tokens>15000000 tokens left</total_tokens>`（与 cli-hop `stabilizeOfficialContextBudget` 同一值，常量化后历史块逐字节稳定）；
+2. 整块（去空白后）等于该常量的块只保留第一块，其余丢弃——每轮新增的最新提醒被折叠掉，`system[]` 跨轮不变（仅钉值不去重不够：数组每轮多一块，末尾断点照样每轮移位）。
+两条路径同时受益：rust-kernel HTTP（`anthropic-policy.mjs` 的 lift 调用点）与 cli-hop（`outbound-attempt.mjs`，其 stabilize 已钉值，这里再折叠重复块）。语义代价：模型看到的额度提醒恒为常量——与 cli-hop 既有行为一致，且 5 系模型上该提醒本就不影响缓存命中。
+
+**验证**：`node --test test/unit/sanitize.test.mjs` 20/20（新增 5 条：钉值+去重、历史增长时 system 逐字节不变、非纯提醒包裹文本钉值但保留、字符串 system 钉值、无提醒体不变）。部署后验证：opus-4-8 直连多轮会话，usage_logs 的 `cache_read_tokens` 应随会话增长（不再钉在 ~52k）、`cache_creation_1h_tokens` 每轮增量应回落到接近新增内容量；对照指标 = 同会话相邻请求的读/写比。
+
+**合并注意**：上游若把 `modelSupportsMidConversationSystem()` 放宽到 4.x（需上游 API 同步接受，否则回到 400 老问题），或在 lift 路径自带同类稳定化（查 `total_tokens`、`stabilize`、`lift` 相关改动），对照后下线本补丁。rebase 冲突点：`sanitize.mjs` 的 `liftMidConversationSystemMessages` 本体与 `outbound-attempt.mjs` 的常量定义行。
