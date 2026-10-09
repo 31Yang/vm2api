@@ -9,6 +9,8 @@ import {
   promoteContentToBlocks,
   promoteSystemToBlocks,
   canonicalizeClaudeMessagesShape,
+  liftMidConversationSystemMessages,
+  STABILIZED_CONTEXT_BUDGET,
 } from '../../src/lib/protocol/sanitize.mjs'
 
 test('copyOfficialAnthropicFields keeps official keys and drops client junk', () => {
@@ -158,4 +160,86 @@ test('applyStructuredOutput promotes response_format before drop', () => {
   const result = applyStructuredOutput({ ...out }, source)
   assert.ok(result.output_config)
   assert.equal(result.output_config.format.type, 'json_schema')
+})
+
+// Fork patch (lift-budget-stabilize): lifted <total_tokens> reminders must not
+// make top-level system[] grow / change per turn or the cache prefix breaks.
+test('liftMidConversationSystemMessages pins budget counter and keeps one block', () => {
+  const body = {
+    model: 'claude-opus-4-8',
+    system: [{ type: 'text', text: 'persona' }],
+    messages: [
+      { role: 'user', content: 'hi' },
+      { role: 'system', content: '<total_tokens>182000 tokens left</total_tokens>' },
+      { role: 'assistant', content: 'hello' },
+      { role: 'system', content: '<total_tokens>171500 tokens left</total_tokens>' },
+      { role: 'user', content: 'next' },
+    ],
+  }
+  const out = liftMidConversationSystemMessages(body)
+  assert.equal(out.messages.some((m) => m.role === 'system'), false)
+  assert.deepEqual(out.system, [{ type: 'text', text: 'persona' }, { type: 'text', text: STABILIZED_CONTEXT_BUDGET }])
+})
+
+test('liftMidConversationSystemMessages is turn-invariant as history grows', () => {
+  const turn = (history) => ({
+    model: 'claude-opus-4-8',
+    system: [{ type: 'text', text: 'persona' }],
+    messages: history,
+  })
+  const base = [
+    { role: 'user', content: 'a' },
+    { role: 'system', content: '<total_tokens>190000 tokens left</total_tokens>' },
+    { role: 'assistant', content: 'b' },
+  ]
+  const later = [
+    ...base,
+    { role: 'system', content: '<total_tokens>12345 tokens left</total_tokens>' },
+    { role: 'user', content: 'c' },
+    { role: 'system', content: '<total_tokens>1 tokens left</total_tokens>' },
+  ]
+  const out1 = liftMidConversationSystemMessages(turn(base))
+  const out2 = liftMidConversationSystemMessages(turn(later))
+  assert.deepEqual(out2.system, out1.system)
+})
+
+test('liftMidConversationSystemMessages pins but keeps non-pure budget wrappers', () => {
+  const body = {
+    model: 'claude-opus-4-8',
+    messages: [
+      { role: 'user', content: 'hi' },
+      { role: 'system', content: 'note: <total_tokens>999 tokens left</total_tokens> today' },
+      { role: 'system', content: '<total_tokens>998 tokens left</total_tokens>' },
+      { role: 'system', content: '<total_tokens>997 tokens left</total_tokens>' },
+    ],
+  }
+  const out = liftMidConversationSystemMessages(body)
+  const texts = out.system.map((b) => b.text)
+  assert.deepEqual(texts, [`note: ${STABILIZED_CONTEXT_BUDGET} today`, STABILIZED_CONTEXT_BUDGET])
+})
+
+test('liftMidConversationSystemMessages pins a string system budget', () => {
+  const body = {
+    model: 'claude-opus-4-8',
+    system: 'budget: <total_tokens>42 tokens left</total_tokens>',
+    messages: [{ role: 'user', content: 'hi' }],
+  }
+  const out = liftMidConversationSystemMessages(body)
+  assert.equal(out.system, `budget: ${STABILIZED_CONTEXT_BUDGET}`)
+})
+
+test('liftMidConversationSystemMessages leaves reminder-free bodies untouched', () => {
+  const body = {
+    model: 'claude-opus-4-8',
+    system: [{ type: 'text', text: 'persona' }],
+    messages: [
+      { role: 'user', content: 'hi' },
+      { role: 'system', content: 'session started' },
+    ],
+  }
+  const out = liftMidConversationSystemMessages(body)
+  assert.deepEqual(out.system, [
+    { type: 'text', text: 'persona' },
+    { type: 'text', text: 'session started' },
+  ])
 })
