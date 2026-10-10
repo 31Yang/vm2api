@@ -464,7 +464,7 @@ test('fork patch mid-system-models: Sonnet 4.6 lifts role=system turns like Haik
 })
 
 test('fork patch mid-system-models: supported models keep role=system turns in place', () => {
-  for (const model of ['claude-opus-5', 'claude-opus-5-5', 'claude-sonnet-5', 'claude-sonnet-5-5']) {
+  for (const model of ['claude-opus-5', 'claude-opus-5-5', 'claude-opus-4-8', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
     const body = prepareCliHopBody({
       model,
       max_tokens: 64000,
@@ -478,32 +478,40 @@ test('fork patch mid-system-models: supported models keep role=system turns in p
 })
 
 test('fork patch mid-system-models: modelSupportsMidConversationSystem model table', () => {
-  // Expectations track the upstream implementation (v1.3.123): only the Claude 5 family accepts
-  // a mid-conversation role=system turn; Opus 4.8 and Fable 5 are now treated as unsupported.
+  // Expectations track the upstream implementation (v1.3.135, #324): the docs-listed models accept
+  // a mid-conversation role=system turn — Fable 5/5.1, Mythos 5/5.1, Opus 5/5.5/4.8, Sonnet 5.5,
+  // Haiku 5.5. Sonnet 5, Haiku 5 and Claude 4.x others lift it into top-level system instead.
   const unsupported = [
     'claude-haiku-4-5',
     'claude-haiku-4-5-20251001',
+    'claude-haiku-5',
     'claude-sonnet-4-6',
     'claude-sonnet-4-5-20250929',
     'claude-sonnet-4-20250514',
+    'claude-sonnet-5',
+    'claude-sonnet-5-fast',
+    'claude-sonnet-5[1m]',
     'claude-opus-4-6',
     'claude-opus-4-7',
-    'claude-opus-4-8',
     'claude-opus-4-1-20250805',
     'claude-3-7-sonnet-20250219',
-    'claude-fable-5',
+    'claude-mythos-preview',
     'CLAUDE-SONNET-4-6',
   ]
   const supported = [
+    'claude-fable-5',
+    'claude-fable-5-1',
+    'claude-fable-5.1[1m]',
+    'claude-mythos-5',
+    'claude-mythos-5-1',
     'claude-opus-5',
     'claude-opus-5-5',
     'claude-opus-5.5',
     'claude-opus-5-5-20251001',
-    'claude-sonnet-5',
+    'claude-opus-4-8',
     'claude-sonnet-5-5',
-    'claude-haiku-5',
+    'claude-sonnet-5.5',
     'claude-haiku-5-5',
-    'claude-sonnet-5[1m]',
   ]
   for (const model of unsupported) assert.equal(modelSupportsMidConversationSystem(model), false, model)
   for (const model of supported) assert.equal(modelSupportsMidConversationSystem(model), true, model)
