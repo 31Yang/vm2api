@@ -551,7 +551,13 @@ test('fork patch mid-system-models: Sonnet 4.6 lifts role=system turns like Haik
 })
 
 test('fork patch mid-system-models: supported models keep role=system turns in place', () => {
-  for (const model of ['claude-opus-5', 'claude-opus-5-5', 'claude-opus-4-8', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+  for (const model of [
+    'claude-opus-5',
+    'claude-opus-5-5',
+    'claude-opus-4-8',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+  ]) {
     const body = prepareCliHopBody({
       model,
       max_tokens: 64000,

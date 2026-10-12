@@ -177,8 +177,14 @@ test('liftMidConversationSystemMessages pins budget counter and keeps one block'
     ],
   }
   const out = liftMidConversationSystemMessages(body)
-  assert.equal(out.messages.some((m) => m.role === 'system'), false)
-  assert.deepEqual(out.system, [{ type: 'text', text: 'persona' }, { type: 'text', text: STABILIZED_CONTEXT_BUDGET }])
+  assert.equal(
+    out.messages.some((m) => m.role === 'system'),
+    false,
+  )
+  assert.deepEqual(out.system, [
+    { type: 'text', text: 'persona' },
+    { type: 'text', text: STABILIZED_CONTEXT_BUDGET },
+  ])
 })
 
 test('liftMidConversationSystemMessages is turn-invariant as history grows', () => {

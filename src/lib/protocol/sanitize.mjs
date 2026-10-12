@@ -322,14 +322,21 @@ const VOLATILE_CONTEXT_BUDGET = /<total_tokens>\d+ tokens left<\/total_tokens>/g
 
 function stabilizeLiftedBudgetBlocks(system) {
   if (typeof system === 'string') {
-    return system.includes('<total_tokens>') ? system.replace(VOLATILE_CONTEXT_BUDGET, STABILIZED_CONTEXT_BUDGET) : system
+    return system.includes('<total_tokens>')
+      ? system.replace(VOLATILE_CONTEXT_BUDGET, STABILIZED_CONTEXT_BUDGET)
+      : system
   }
   if (!Array.isArray(system)) return system
   let seenBudget = false
   let changed = false
   const blocks = []
   for (const block of system) {
-    if (!block || typeof block !== 'object' || typeof block.text !== 'string' || !block.text.includes('<total_tokens>')) {
+    if (
+      !block ||
+      typeof block !== 'object' ||
+      typeof block.text !== 'string' ||
+      !block.text.includes('<total_tokens>')
+    ) {
       blocks.push(block)
       continue
     }
@@ -355,7 +362,10 @@ function stabilizeLiftedBudgetBlocks(system) {
  */
 export function liftMidConversationSystemMessages(body) {
   if (!body || !Array.isArray(body.messages)) return body
-  const lifted = normalizeAnthropicMessages({ ...body, messages: body.messages.slice() }, { keepMidConversationSystem: false })
+  const lifted = normalizeAnthropicMessages(
+    { ...body, messages: body.messages.slice() },
+    { keepMidConversationSystem: false },
+  )
   const system = stabilizeLiftedBudgetBlocks(lifted.system)
   return system === lifted.system ? lifted : { ...lifted, system }
 }
