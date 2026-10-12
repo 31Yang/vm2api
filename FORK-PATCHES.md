@@ -11,7 +11,7 @@
 | 补丁分支 | `fork-patches`（VPS `/opt/vm2api` 当前 checkout 的分支） |
 | 线上基线 | `v1.3.148`（2026-10-12 09:42 UTC 起，= v1.3.148 + 补丁 3/4/8；VPS 自建镜像 `vm2api:v1.3.148-fp1`；部署与验证细节见 `../vps/vm2api-部署指南.md` §12/§15） |
 | 升级验证基线 | `v1.3.148`（2026-10-12 `git rebase --onto v1.3.148 e1a91e46 fork-patches` 完成；补丁 3 干净、补丁 4 仅测试冲突、补丁 8 手工合并，3/4/8 均保留。格式化后专项测试 sanitize 20/20、cli-hop-body 24/24、min-max-tokens 7/7；go-worker-client Windows 13 pass / 24 skip / 0 fail，部署后 Linux 37/37。fork 与纯净 v1.3.148 全量 unit 同为 23/209 个失败文件且集合逐项一致；Go worker race 全绿；Biome/gofmt/Prettier 通过。本机镜像 `sha256:b6362e6639b9838a5a90a073740d6e640e216262ae7683300dfab3e477e55795` 已验证；实际部署因低峰传输过慢改为 VPS 从 `c38c753b` 纯净 `git archive` 构建，镜像 ID `sha256:f65143846b77c0f78f5a97d873e2557a049f3d5dc19221a51e97f6b82373ab47`，两者 VERSION 与 payload 哈希一致；保护 tag `pre-rebase-13148-fp1`） |
-| 本地对应分支 | `fork-patches`（本机 clone 跟踪 `origin/fork-patches`；旧的 `fix/egress-self-loop` 已停用） |
+| 本地对应分支 | `fork-patches`（远端可能领先仅文档提交；线上运行时为 `c38c753b`。旧的 `fix/egress-self-loop` 已停用） |
 | 控制面镜像 | 自建，tag 形如 `vm2api:v<基线>-fp<N>`，由 `docker-compose.override.yml` 的 `image:` 固定（见下方流程第 4 步） |
 
 **升级上游新版本的流程（2026-09-29 修订）：**
