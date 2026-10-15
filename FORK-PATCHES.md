@@ -14,6 +14,7 @@
 | 升级验证基线 | `v1.3.148`（2026-10-12 `git rebase --onto v1.3.148 e1a91e46 fork-patches` 完成；补丁 3 干净、补丁 4 仅测试冲突、补丁 8 手工合并，3/4/8 均保留。格式化后专项测试 sanitize 20/20、cli-hop-body 24/24、min-max-tokens 7/7；go-worker-client Windows 13 pass / 24 skip / 0 fail，部署后 Linux 37/37。fork 与纯净 v1.3.148 全量 unit 同为 23/209 个失败文件且集合逐项一致；Go worker race 全绿；Biome/gofmt/Prettier 通过。本机镜像 `sha256:b6362e6639b9838a5a90a073740d6e640e216262ae7683300dfab3e477e55795` 已验证；实际部署因低峰传输过慢改为 VPS 从 `c38c753b` 纯净 `git archive` 构建，镜像 ID `sha256:f65143846b77c0f78f5a97d873e2557a049f3d5dc19221a51e97f6b82373ab47`，两者 VERSION 与 payload 哈希一致；保护 tag `pre-rebase-13148-fp1`） |
 | 本地对应分支 | `fork-patches`（远端可能领先仅文档提交；线上运行时为 `c38c753b`。旧的 `fix/egress-self-loop` 已停用） |
 | 控制面镜像 | 自建，tag 形如 `vm2api:v<基线>-fp<N>`，由 `docker-compose.override.yml` 的 `image:` 固定（见下方流程第 4 步） |
+| 本机预构建镜像 | `vm2api:v1.3.170-fp1` = `sha256:a1e4235cb5416ef46a359e764afafdbcd454cf3073cf2539c162e6345a5860ec`；镜像内 `VERSION=1.3.170`，`kin-kernel=d27bdaba…`、`cli-node=c1316b7d…`、`cc-node=be5eec49…` 均与 payload manifest 一致 |
 
 **升级上游新版本的流程（2026-09-29 修订）：**
 1. 本机：`git fetch upstream --tags && git fetch origin`，在 `fork-patches` 上 `git rebase v<X.Y.Z>`（冲突按下面各补丁节的「合并注意」处理）→ `npm ci && npm run test:unit` → `git push --force-with-lease origin fork-patches`。Windows 上有一批与平台相关的既有失败测试文件（tar 备份、`/opt/vm2api` 路径映射、软链接、文件权限、Unix socket 等；2026-10-08 实测干净 tag 基线：v1.3.123 为 18 个文件失败、v1.3.124 为 20 个（v1.3.124 失败集合与 fork 分支逐项比对持平），fork 分支不得比对应基线多），以 VPS 上 Linux 容器跑的结果为准
