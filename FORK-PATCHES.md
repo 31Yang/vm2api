@@ -15,11 +15,11 @@
 | 本机预构建镜像 | `vm2api:v1.3.170-fp1` = `sha256:a1e4235cb5416ef46a359e764afafdbcd454cf3073cf2539c162e6345a5860ec`；镜像内 `VERSION=1.3.170`，`kin-kernel=d27bdaba…`、`cli-node=c1316b7d…`、`cc-node=be5eec49…` 均与 payload manifest 一致 |
 
 **升级上游新版本的流程（2026-09-29 修订）：**
-1. 本机：`git fetch upstream --tags && git fetch origin`，在 `fork-patches` 上 `git rebase v<X.Y.Z>`（冲突按下面各补丁节的「合并注意」处理）→ `npm ci && npm run test:unit` → `git push --force-with-lease origin fork-patches`。Windows 上有一批与平台相关的既有失败测试文件（tar 备份、`/opt/vm2api` 路径映射、软链接、文件权限、Unix socket 等；2026-10-08 实测干净 tag 基线：v1.3.123 为 18 个文件失败、v1.3.124 为 20 个（v1.3.124 失败集合与 fork 分支逐项比对持平），fork 分支不得比对应基线多），以 VPS 上 Linux 容器跑的结果为准
+1. 本机：`git fetch upstream --tags && git fetch origin`，在 `fork-patches` 上 `git rebase v<X.Y.Z>`（冲突按下面各补丁节的「合并注意」处理）→ `npm ci && npm run test:unit` → `git push --force-with-lease origin fork-patches`。Windows 有一批平台相关既有失败（tar 备份、`/opt/vm2api` 路径映射、软链接、文件权限、Unix socket 等；v1.3.170 纯净基线 = 26/227 个失败文件，fork 必须与对应纯净 tag 逐项比对），最终以 VPS Linux 结果为准
 2. VPS：先备份 `src/config/routing.json`（线上配置但受 git 跟踪），再 `cd /opt/vm2api && git fetch origin && git reset --keep origin/fork-patches`。**不要用 `--hard`**：会把线上 routing.json（健康探针间隔等）打回仓库版本；`--keep` 只更新两个提交之间有差异的文件，遇到冲突会中止
 3. 构建边界：v1.3.140 起 Go helper 由 `worker/` 源码在 Dockerfile 编译；闭源 kernel/CLI/glibc shim 按 `deploy/payload.json` 下载校验。不要手工替换 `bin/` / `share/wrap-cli/` 产物，也不要提交这些本地产物。
 4. 控制面：在 VPS 用纯净 `git archive origin/fork-patches` 解到临时目录后 `docker build -t vm2api:v<X.Y.Z>-fp<N> "$tmp"`，避免把 live routing/config 打进镜像 → 把 `docker-compose.override.yml` 里 `services.vm2api.image` 改成该 tag → `docker compose up -d --no-build`。`.env` 的 `VM2API_IMAGE_TAG` 同步改成上游基线 tag（仅作回退参考）。**不要 `docker compose pull`**（override 里的本地 tag 不在任何仓库，pull 会报错）；回退官方镜像 = 删掉 override 的 `image:` 行 → `docker pull ghcr.io/dofastted/vm2api:v<X.Y.Z>` → `docker compose up -d`
-5. 照上游 CHANGELOG「已部署机升级」段落决定是否 `wrap-cli/sync`、是否重启槽；冒烟后在部署指南 §15 登记。**跨过的版本里只要 `share/wrap-cli/cli-node` / `cc-node` 字节变了，就必须手动 `wrap-cli/sync`**：这些文件受 git 跟踪、`share/` 是挂载目录，第 2 步的 `git reset` 已先把宿主文件换成新版，容器入口脚本比对「镜像 = 宿主」就不会自动同步，槽里还是旧 CLI
+5. 照上游 CHANGELOG「已部署机升级」段落决定是否 `wrap-cli/sync`、是否重启槽；冒烟后在部署指南 §15 登记。**跨过的版本里只要 `share/wrap-cli/cli-node` / `cc-node` / `kin-kernel.bin` 字节变了，就必须手动 `wrap-cli/sync`**：`share/` 是宿主挂载目录，控制面重建只会刷新模板/宿主文件，正在运行的槽内 payload 不会自动换新。
 
 > 上游在 2026-09 底重写过一次 git 历史（新根提交 `74aa459`「Publish a clean vm2api monorepo snapshot」）：本机 `v1.3.74` 及更早的 tag 仍是旧哈希，`git fetch upstream --tags` 会对它们报 `would clobber existing tag`，无害（v1.3.75 起一致，`fork-patches` 已在新历史上）。想清掉报错可 `git fetch upstream --tags --force`。
 
