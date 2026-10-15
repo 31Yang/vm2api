@@ -10,13 +10,13 @@
 |---|---|
 | 上游 | `upstream` = github.com/dofastted/vm2api |
 | 补丁分支 | `fork-patches`（VPS `/opt/vm2api` 当前 checkout 的分支） |
-| 线上基线 | `v1.3.170`（2026-10-15 03:42 UTC 起，= v1.3.170 + 补丁 3/4/8；运行时提交 `671460db`，VPS 自建镜像 `vm2api:v1.3.170-fp1`；部署与验证细节见 `../vps/vm2api-部署指南.md` §12/§15） |
-| 本地待部署验证基线 | `v1.3.173`（2026-10-15 `git rebase --onto v1.3.173 v1.3.170 fork-patches` 完成，上游 tag `02a5718a`，rebase 前 HEAD `602b8a65`，保护 tag `pre-rebase-13173-fp1`。唯一真冲突为 `cli-hop-body.test.mjs`；补丁 3/4/8 全保留。专项 201/201、Linux Node 22 专项 248/248；Windows 全量 unit 与纯净 v1.3.173 同为 26/227 个失败文件且逐项一致；Go worker race、格式化检查、Web build 通过。本机 Linux 全量 unit 因 Docker bind mount 卡住不计通过，部署后 VPS 补跑） |
-| 升级验证基线 | `v1.3.170`（2026-10-15 `git rebase --onto v1.3.170 v1.3.148 fork-patches` 完成，上游 tag 提交 `ba35e7c2`；补丁 3/4/8 全保留，冲突裁决提交 `3b9103b0`。Linux Node 22 容器专项 118/118；Windows 全量 unit 与纯净 v1.3.170 同为 26/227 个失败文件且逐项一致；Go worker race 全绿；Biome、Prettier、gofmt、Web build 通过。VPS Linux 全量 unit 226/227 直接通过，唯一 egress 文件为测试容器二进制路径环境问题，改设挂载路径后 25/25 通过。保护 tag `pre-rebase-13170-fp1`） |
-| 历史验证基线 | `v1.3.148`（2026-10-12 `git rebase --onto v1.3.148 e1a91e46 fork-patches` 完成；补丁 3 干净、补丁 4 仅测试冲突、补丁 8 手工合并，3/4/8 均保留。格式化后专项测试 sanitize 20/20、cli-hop-body 24/24、min-max-tokens 7/7；go-worker-client Windows 13 pass / 24 skip / 0 fail，部署后 Linux 37/37。fork 与纯净 v1.3.148 全量 unit 同为 23/209 个失败文件且集合逐项一致；Go worker race 全绿；Biome/gofmt/Prettier 通过。本机镜像 `sha256:b6362e6639b9838a5a90a073740d6e640e216262ae7683300dfab3e477e55795` 已验证；实际部署因低峰传输过慢改为 VPS 从 `c38c753b` 纯净 `git archive` 构建，镜像 ID `sha256:f65143846b77c0f78f5a97d873e2557a049f3d5dc19221a51e97f6b82373ab47`，两者 VERSION 与 payload 哈希一致；保护 tag `pre-rebase-13148-fp1`） |
-| 本地对应分支 | `fork-patches`（线上运行时为 `671460db`；后续仅文档提交可领先。旧的 `fix/egress-self-loop` 已停用） |
+| 线上基线 | `v1.3.173`（2026-10-15 10:35 UTC 起，= v1.3.173 + 补丁 3/4/8；运行时提交 `b93f27b2`，VPS 自建镜像 `vm2api:v1.3.173-fp1`；部署与验证细节见 `../vps/vm2api-部署指南.md` §12/§15） |
+| 升级验证基线 | `v1.3.173`（2026-10-15 `git rebase --onto v1.3.173 v1.3.170 fork-patches` 完成，上游 tag `02a5718a`，rebase 前 HEAD `602b8a65`，保护 tag `pre-rebase-13173-fp1`。唯一真冲突为 `cli-hop-body.test.mjs`；补丁 3/4/8 全保留。专项 201/201、Linux Node 22 专项 248/248；Windows 全量 unit 与纯净 v1.3.173 同为 26/227 个失败文件且逐项一致；Go worker race、格式化检查、Web build 通过。VPS Linux 全量 unit 227/227 个文件通过） |
+| 历史验证基线 | `v1.3.170`（2026-10-15 `git rebase --onto v1.3.170 v1.3.148 fork-patches` 完成，上游 tag 提交 `ba35e7c2`；补丁 3/4/8 全保留，冲突裁决提交 `3b9103b0`。Linux Node 22 容器专项 118/118；Windows 全量 unit 与纯净 v1.3.170 同为 26/227 个失败文件且逐项一致；Go worker race 全绿；Biome、Prettier、gofmt、Web build 通过。VPS Linux 全量 unit 226/227 直接通过，唯一 egress 文件为测试容器二进制路径环境问题，改设挂载路径后 25/25 通过。保护 tag `pre-rebase-13170-fp1`） |
+| 更早验证基线 | `v1.3.148`（2026-10-12 `git rebase --onto v1.3.148 e1a91e46 fork-patches` 完成；补丁 3 干净、补丁 4 仅测试冲突、补丁 8 手工合并，3/4/8 均保留。格式化后专项测试 sanitize 20/20、cli-hop-body 24/24、min-max-tokens 7/7；go-worker-client Windows 13 pass / 24 skip / 0 fail，部署后 Linux 37/37。fork 与纯净 v1.3.148 全量 unit 同为 23/209 个失败文件且集合逐项一致；Go worker race 全绿；Biome/gofmt/Prettier 通过。本机镜像 `sha256:b6362e6639b9838a5a90a073740d6e640e216262ae7683300dfab3e477e55795` 已验证；实际部署因低峰传输过慢改为 VPS 从 `c38c753b` 纯净 `git archive` 构建，镜像 ID `sha256:f65143846b77c0f78f5a97d873e2557a049f3d5dc19221a51e97f6b82373ab47`，两者 VERSION 与 payload 哈希一致；保护 tag `pre-rebase-13148-fp1`） |
+| 本地对应分支 | `fork-patches`（线上运行时为 `b93f27b2`；后续仅文档提交可领先。旧的 `fix/egress-self-loop` 已停用） |
 | 控制面镜像 | 自建，tag 形如 `vm2api:v<基线>-fp<N>`，由 `docker-compose.override.yml` 的 `image:` 固定（见下方流程第 4 步） |
-| VPS 线上镜像 | `vm2api:v1.3.170-fp1` = `sha256:fc2105036d33f3dcd4d2da0bd7d8e27e7313d095bffecf866d20059305007990`（814708992 bytes，BuildKit manifest list ID）；镜像内 `VERSION=1.3.170`，`kin-kernel=d27bdaba…`、`cli-node=c1316b7d…`、`cc-node=be5eec49…` 均与 payload manifest 一致 |
+| VPS 线上镜像 | `vm2api:v1.3.173-fp1` = `sha256:024b5be443045bf0647afe8b5daf84915cd414c50da58d564e80799b0ac3ce22`（814753240 bytes，BuildKit manifest list ID）；镜像内 `VERSION=1.3.173`，`kin-kernel=d27bdaba…`、`cli-node=c1316b7d…`、`cc-node=be5eec49…` 均与 payload manifest 一致 |
 | 本机预构建镜像 | `vm2api:v1.3.173-fp1` = `sha256:51e9eda9a2bc83ae432208604f8423a1b510a6dfea66e15abdca38126142a79c`；镜像内 `VERSION=1.3.173`，`kin-kernel=d27bdaba…`、`cli-node=c1316b7d…`、`cc-node=be5eec49…` 均与 payload manifest 一致 |
 
 **升级上游新版本的流程（2026-09-29 修订）：**
@@ -255,6 +255,8 @@ cd /opt/vm2api && docker compose restart
 > v1.3.170 rebase 裁决：完整保留上游 #383 per-message effort 语义，仅在 lift 返回后对顶层 `system` 钉值并去重；新增用例确认 sonnet-5.5 空 `output_config` 控制轮不丢。
 
 > v1.3.173 rebase 裁决：上游新增 `collapseSystemBudgetReminders()`，只处理 cli-hop 顶层 system 提醒；本补丁覆盖 rust-kernel 直连 lift 路径，继续保留。部署后探针仍要求两轮 system 逐字节稳定、仅保留一条 budget reminder、第 2 轮 cache_read 等于第 1 轮 cache_creation。
+
+> 2026-10-15 10:35 UTC 部署复核：同型 sonnet-5 探针两轮 system SHA256 均为 `fd5c1988…a6828`，各仅 1 条 budget reminder；第 2 轮 `cache_read=8647` 等于第 1 轮 `cache_creation=8647`，新增仅写 14。
 
 | 项 | 值 |
 |---|---|
