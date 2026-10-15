@@ -5,20 +5,22 @@
 
 ## 分支与基线
 
+
 | 项 | 值 |
 |---|---|
 | 上游 | `upstream` = github.com/dofastted/vm2api |
 | 补丁分支 | `fork-patches`（VPS `/opt/vm2api` 当前 checkout 的分支） |
 | 线上基线 | `v1.3.170`（2026-10-15 03:42 UTC 起，= v1.3.170 + 补丁 3/4/8；运行时提交 `671460db`，VPS 自建镜像 `vm2api:v1.3.170-fp1`；部署与验证细节见 `../vps/vm2api-部署指南.md` §12/§15） |
+| 本地待部署验证基线 | `v1.3.173`（2026-10-15 `git rebase --onto v1.3.173 v1.3.170 fork-patches` 完成，上游 tag `02a5718a`，rebase 前 HEAD `602b8a65`，保护 tag `pre-rebase-13173-fp1`。唯一真冲突为 `cli-hop-body.test.mjs`；补丁 3/4/8 全保留。专项 201/201、Linux Node 22 专项 248/248；Windows 全量 unit 与纯净 v1.3.173 同为 26/227 个失败文件且逐项一致；Go worker race、格式化检查、Web build 通过。本机 Linux 全量 unit 因 Docker bind mount 卡住不计通过，部署后 VPS 补跑） |
 | 升级验证基线 | `v1.3.170`（2026-10-15 `git rebase --onto v1.3.170 v1.3.148 fork-patches` 完成，上游 tag 提交 `ba35e7c2`；补丁 3/4/8 全保留，冲突裁决提交 `3b9103b0`。Linux Node 22 容器专项 118/118；Windows 全量 unit 与纯净 v1.3.170 同为 26/227 个失败文件且逐项一致；Go worker race 全绿；Biome、Prettier、gofmt、Web build 通过。VPS Linux 全量 unit 226/227 直接通过，唯一 egress 文件为测试容器二进制路径环境问题，改设挂载路径后 25/25 通过。保护 tag `pre-rebase-13170-fp1`） |
 | 历史验证基线 | `v1.3.148`（2026-10-12 `git rebase --onto v1.3.148 e1a91e46 fork-patches` 完成；补丁 3 干净、补丁 4 仅测试冲突、补丁 8 手工合并，3/4/8 均保留。格式化后专项测试 sanitize 20/20、cli-hop-body 24/24、min-max-tokens 7/7；go-worker-client Windows 13 pass / 24 skip / 0 fail，部署后 Linux 37/37。fork 与纯净 v1.3.148 全量 unit 同为 23/209 个失败文件且集合逐项一致；Go worker race 全绿；Biome/gofmt/Prettier 通过。本机镜像 `sha256:b6362e6639b9838a5a90a073740d6e640e216262ae7683300dfab3e477e55795` 已验证；实际部署因低峰传输过慢改为 VPS 从 `c38c753b` 纯净 `git archive` 构建，镜像 ID `sha256:f65143846b77c0f78f5a97d873e2557a049f3d5dc19221a51e97f6b82373ab47`，两者 VERSION 与 payload 哈希一致；保护 tag `pre-rebase-13148-fp1`） |
 | 本地对应分支 | `fork-patches`（线上运行时为 `671460db`；后续仅文档提交可领先。旧的 `fix/egress-self-loop` 已停用） |
 | 控制面镜像 | 自建，tag 形如 `vm2api:v<基线>-fp<N>`，由 `docker-compose.override.yml` 的 `image:` 固定（见下方流程第 4 步） |
 | VPS 线上镜像 | `vm2api:v1.3.170-fp1` = `sha256:fc2105036d33f3dcd4d2da0bd7d8e27e7313d095bffecf866d20059305007990`（814708992 bytes，BuildKit manifest list ID）；镜像内 `VERSION=1.3.170`，`kin-kernel=d27bdaba…`、`cli-node=c1316b7d…`、`cc-node=be5eec49…` 均与 payload manifest 一致 |
-| 本机预构建镜像 | `vm2api:v1.3.170-fp1` = `sha256:a1e4235cb5416ef46a359e764afafdbcd454cf3073cf2539c162e6345a5860ec`；镜像内 `VERSION=1.3.170`，`kin-kernel=d27bdaba…`、`cli-node=c1316b7d…`、`cc-node=be5eec49…` 均与 payload manifest 一致 |
+| 本机预构建镜像 | `vm2api:v1.3.173-fp1` = `sha256:51e9eda9a2bc83ae432208604f8423a1b510a6dfea66e15abdca38126142a79c`；镜像内 `VERSION=1.3.173`，`kin-kernel=d27bdaba…`、`cli-node=c1316b7d…`、`cc-node=be5eec49…` 均与 payload manifest 一致 |
 
 **升级上游新版本的流程（2026-09-29 修订）：**
-1. 本机：`git fetch upstream --tags && git fetch origin`，在 `fork-patches` 上 `git rebase v<X.Y.Z>`（冲突按下面各补丁节的「合并注意」处理）→ `npm ci && npm run test:unit` → `git push --force-with-lease origin fork-patches`。Windows 有一批平台相关既有失败（tar 备份、`/opt/vm2api` 路径映射、软链接、文件权限、Unix socket 等；v1.3.170 纯净基线 = 26/227 个失败文件，fork 必须与对应纯净 tag 逐项比对），最终以 VPS Linux 结果为准
+1. 本机：`git fetch upstream --tags && git fetch origin`，在 `fork-patches` 上 `git rebase v<X.Y.Z>`（冲突按下面各补丁节的「合并注意」处理）→ `npm ci && npm run test:unit` → `git push --force-with-lease origin fork-patches`。Windows 有一批平台相关既有失败（tar 备份、`/opt/vm2api` 路径映射、软链接、文件权限、Unix socket 等；v1.3.173 纯净基线 = 26/227 个失败文件，fork 必须与对应纯净 tag 逐项比对），最终以 VPS Linux 结果为准
 2. VPS：先备份 `src/config/routing.json`（线上配置但受 git 跟踪），再 `cd /opt/vm2api && git fetch origin && git reset --keep origin/fork-patches`。**不要用 `--hard`**：会把线上 routing.json（健康探针间隔等）打回仓库版本；`--keep` 只更新两个提交之间有差异的文件，遇到冲突会中止
 3. 构建边界：v1.3.140 起 Go helper 由 `worker/` 源码在 Dockerfile 编译；闭源 kernel/CLI/glibc shim 按 `deploy/payload.json` 下载校验。不要手工替换 `bin/` / `share/wrap-cli/` 产物，也不要提交这些本地产物。
 4. 控制面：在 VPS 用纯净 `git archive origin/fork-patches` 解到临时目录后 `docker build -t vm2api:v<X.Y.Z>-fp<N> "$tmp"`，避免把 live routing/config 打进镜像 → 把 `docker-compose.override.yml` 里 `services.vm2api.image` 改成该 tag → `docker compose up -d --no-build`。`.env` 的 `VM2API_IMAGE_TAG` 同步改成上游基线 tag（仅作回退参考）。**不要 `docker compose pull`**（override 里的本地 tag 不在任何仓库，pull 会报错）；回退官方镜像 = 删掉 override 的 `image:` 行 → `docker pull ghcr.io/dofastted/vm2api:v<X.Y.Z>` → `docker compose up -d`
@@ -153,6 +155,8 @@ cd /opt/vm2api && docker compose restart
 
 **合并注意（v1.3.170 rebase 已执行）**：上游为官方 Claude Code 家族透传新增 `preserveSystem`，会在透传模式下跳过 `stripCliOwnedSystem` 并让 `removeCacheControlFields` 保留 system 断点。本补丁的小预算保底插在该分支之前，thinking 抬升仍在上游 thinking 补全之后，二者共存；`preserveSystem` 用例补充断言 opus-5.5 的 32 会因 adaptive thinking 最终抬到 4096。
 
+**合并注意（v1.3.173 rebase 已执行）**：仅 `cli-hop-body.test.mjs` 冲突。保留上游 budget reminder 回归用例，同时保留本补丁的 max_tokens、模型表与 v1.3.170 `preserveSystem` 断言；源码自动合并后小 `max_tokens` 保底与上游透传语义共存。
+
 ---
 
 ## 补丁 4：CLI 错误语义——撞 max_tokens 回 200、上游超长回 400（active）
@@ -249,6 +253,8 @@ cd /opt/vm2api && docker compose restart
 ## 补丁 8：lift 路径 total_tokens 提醒钉常量 + 去重（lift-budget-stabilize，active）
 
 > v1.3.170 rebase 裁决：完整保留上游 #383 per-message effort 语义，仅在 lift 返回后对顶层 `system` 钉值并去重；新增用例确认 sonnet-5.5 空 `output_config` 控制轮不丢。
+
+> v1.3.173 rebase 裁决：上游新增 `collapseSystemBudgetReminders()`，只处理 cli-hop 顶层 system 提醒；本补丁覆盖 rust-kernel 直连 lift 路径，继续保留。部署后探针仍要求两轮 system 逐字节稳定、仅保留一条 budget reminder、第 2 轮 cache_read 等于第 1 轮 cache_creation。
 
 | 项 | 值 |
 |---|---|
