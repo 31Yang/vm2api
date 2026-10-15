@@ -10,6 +10,7 @@
 | 上游 | `upstream` = github.com/dofastted/vm2api |
 | 补丁分支 | `fork-patches`（VPS `/opt/vm2api` 当前 checkout 的分支） |
 | 线上基线 | `v1.3.148`（2026-10-12 09:42 UTC 起，= v1.3.148 + 补丁 3/4/8；VPS 自建镜像 `vm2api:v1.3.148-fp1`；部署与验证细节见 `../vps/vm2api-部署指南.md` §12/§15） |
+| 本地待部署验证基线 | `v1.3.170`（2026-10-15 `git rebase --onto v1.3.170 v1.3.148 fork-patches` 完成，上游 tag 提交 `ba35e7c2`；补丁 3/4/8 全保留，冲突裁决提交 `3b9103b0`。Linux Node 22 容器专项 118/118（含 Unix socket / output-cap / TTFT / per-message effort）；Windows 全量 unit 与纯净 v1.3.170 同为 26/227 个失败文件且逐项一致；Go worker race 全绿；Biome、Prettier、gofmt、Web build 通过。保护 tag `pre-rebase-13170-fp1`。Linux 全量 unit 曾在 Docker bind 上因 `wrap-cli-runtime.test.mjs` 挂起而中断，中断后的 5/227 不计通过；部署后应在 VPS 原生 Linux 环境补跑） |
 | 升级验证基线 | `v1.3.148`（2026-10-12 `git rebase --onto v1.3.148 e1a91e46 fork-patches` 完成；补丁 3 干净、补丁 4 仅测试冲突、补丁 8 手工合并，3/4/8 均保留。格式化后专项测试 sanitize 20/20、cli-hop-body 24/24、min-max-tokens 7/7；go-worker-client Windows 13 pass / 24 skip / 0 fail，部署后 Linux 37/37。fork 与纯净 v1.3.148 全量 unit 同为 23/209 个失败文件且集合逐项一致；Go worker race 全绿；Biome/gofmt/Prettier 通过。本机镜像 `sha256:b6362e6639b9838a5a90a073740d6e640e216262ae7683300dfab3e477e55795` 已验证；实际部署因低峰传输过慢改为 VPS 从 `c38c753b` 纯净 `git archive` 构建，镜像 ID `sha256:f65143846b77c0f78f5a97d873e2557a049f3d5dc19221a51e97f6b82373ab47`，两者 VERSION 与 payload 哈希一致；保护 tag `pre-rebase-13148-fp1`） |
 | 本地对应分支 | `fork-patches`（远端可能领先仅文档提交；线上运行时为 `c38c753b`。旧的 `fix/egress-self-loop` 已停用） |
 | 控制面镜像 | 自建，tag 形如 `vm2api:v<基线>-fp<N>`，由 `docker-compose.override.yml` 的 `image:` 固定（见下方流程第 4 步） |
@@ -148,6 +149,8 @@ cd /opt/vm2api && docker compose restart
 
 **合并注意**：只剩保底部分。上游若恢复 `prepareCliHopBody` 的小预算保底（查 `min_max_tokens`、`CLI_HOP_`、`max_output_tokens` 相关处理）或给分类器以外的 cli-hop 请求官方预算下限，对照后下线本补丁；上游再改 `prepareCliHopBody` 结构时注意保底插入点（`auto_mode_classifier` 早退之后）与 `raiseCliHopMaxTokensForThinking` 调用点（thinking 补全之后），以及 `min-max-tokens.test.mjs` 里按本补丁改过预期的用例。
 
+**合并注意（v1.3.170 rebase 已执行）**：上游为官方 Claude Code 家族透传新增 `preserveSystem`，会在透传模式下跳过 `stripCliOwnedSystem` 并让 `removeCacheControlFields` 保留 system 断点。本补丁的小预算保底插在该分支之前，thinking 抬升仍在上游 thinking 补全之后，二者共存；`preserveSystem` 用例补充断言 opus-5.5 的 32 会因 adaptive thinking 最终抬到 4096。
+
 ---
 
 ## 补丁 4：CLI 错误语义——撞 max_tokens 回 200、上游超长回 400（active）
@@ -191,6 +194,8 @@ cd /opt/vm2api && docker compose restart
 - **自动合并②** `workerRequest` 的 token header（`x-internal-token`）：本补丁未碰此行（距补丁改动约 190 行），上游 #331 把单发改双发（`x-kin-internal-token` + `x-internal-token`，兼容 1.3.120 前后内核握手），git 应自动合入；若因 hunk 窗口被卷进冲突，仍是两边都留，取上游双发。
 - **测试冲突③** `go-worker-client.test.mjs`：上游在文件头加 import（`rust-kernel-client` / `api-kernel-client`）+ 新用例「reads outer Codex status 500」，本补丁也在头部加 import + 7 条用例。裁决：import 去重、两边用例并存。
 - 上游仍未自己处理撞上限/超长（`CONTEXT_OVERFLOW` 关键字 grep 应仍为空），本补丁继续全保留，无下线。
+
+**合并注意（v1.3.170 rebase 已执行）**：上游把 TTFT 改为 `isFirstTokenEvent()` 按真实生成内容计时，并在所有返回点补 `firstTokenAt`。合并时删除本补丁旧 `handleLine` 里“任意 data 行即计 TTFT”的语句，`observeSseEvent()` 保持唯一计时权威；`passLine()` 只负责暂存 event 行、吞 output-cap error 并注入合成终止事件。新增 metadata-only output-cap 用例断言 `firstTokenAt=null`，Linux 专项全部通过。
 
 ---
 
@@ -240,6 +245,8 @@ cd /opt/vm2api && docker compose restart
 ---
 
 ## 补丁 8：lift 路径 total_tokens 提醒钉常量 + 去重（lift-budget-stabilize，active）
+
+> v1.3.170 rebase 裁决：完整保留上游 #383 per-message effort 语义，仅在 lift 返回后对顶层 `system` 钉值并去重；新增用例确认 sonnet-5.5 空 `output_config` 控制轮不丢。
 
 | 项 | 值 |
 |---|---|
