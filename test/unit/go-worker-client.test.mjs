@@ -1230,6 +1230,29 @@ unixTest(
   },
 )
 
+unixTest('fork patch cli-error-semantics: metadata-only output cap does not become TTFT', async () => {
+  const fx = await fixture((req, res) => {
+    res.setHeader('content-type', 'text/event-stream')
+    res.write('data: {"type":"message_start","message":{"role":"assistant","content":[]}}\n\n')
+    res.write(`event: error\n${capErrorData()}`)
+    res.end()
+  })
+  try {
+    const result = await streamGoWorker({
+      exec: fx.exec,
+      cliHop: true,
+      body: { model: 'claude-opus-5-5', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      onEvent: () => {},
+    })
+    assert.equal(result.ok, true)
+    assert.equal(result.stopReason, 'max_tokens')
+    assert.equal(result.ttftMs, null)
+    assert.equal(result.firstTokenAt, null)
+  } finally {
+    await fx.close()
+  }
+})
+
 unixTest('fork patch cli-error-semantics: an open tool_use is closed before the synthetic stop', async () => {
   const fx = await fixture((req, res) => {
     res.setHeader('content-type', 'text/event-stream')

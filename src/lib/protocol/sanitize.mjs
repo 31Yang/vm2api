@@ -297,12 +297,6 @@ export function normalizeAnthropicMessages(body, { keepMidConversationSystem = t
 }
 
 /**
-<<<<<<< HEAD
- * Haiku / hops without mid-conversation-system: lift leftover role=system into top-level system.
- * Effort-only empty system turns stay when the model accepts per-message effort.
- * Other models drop them; a trailing one's effort is copied to top-level
- * `output_config.effort`; historical markers are not.
-=======
  * Fork patch (lift-budget-stabilize): Claude Code appends a live
  * `<total_tokens>N tokens left</total_tokens>` role=system reminder every turn and
  * keeps the whole reminder history. For models gated out of
@@ -356,9 +350,8 @@ function stabilizeLiftedBudgetBlocks(system) {
 
 /**
  * Haiku / hops without mid-conversation-system: lift leftover role=system into
- * top-level system. Content-less control turns are dropped by normalization;
- * lifted textual budget blocks are pinned and deduplicated below.
->>>>>>> 24d1ac85 (fix(protocol): stabilize lifted total_tokens budget blocks (fork patch 8))
+ * top-level system. Effort-only empty system turns stay when the model accepts
+ * per-message effort; lifted textual budget blocks are pinned and deduplicated.
  */
 export function liftMidConversationSystemMessages(body) {
   if (!body || !Array.isArray(body.messages)) return body

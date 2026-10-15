@@ -56,6 +56,7 @@ test('prepareCliHopBody preserveSystem keeps official billing and system cache_c
     },
     { preserveSystem: true },
   )
+  assert.equal(body.max_tokens, 4096)
   assert.equal(body.system[0].text, billing)
   assert.match(body.system[1].text, /You are Claude Code/)
   assert.deepEqual(body.system[2].cache_control, { type: 'ephemeral' })

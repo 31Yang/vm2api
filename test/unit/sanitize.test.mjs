@@ -249,3 +249,21 @@ test('liftMidConversationSystemMessages leaves reminder-free bodies untouched', 
     { type: 'text', text: 'session started' },
   ])
 })
+
+test('liftMidConversationSystemMessages keeps per-message effort controls while pinning budgets', () => {
+  const out = liftMidConversationSystemMessages({
+    model: 'claude-sonnet-5-5',
+    system: [{ type: 'text', text: 'persona' }],
+    messages: [
+      { role: 'user', content: 'hi' },
+      { role: 'system', content: '<total_tokens>99 tokens left</total_tokens>' },
+      { role: 'system', content: [], output_config: { effort: 'high' } },
+    ],
+  })
+  assert.deepEqual(out.system, [
+    { type: 'text', text: 'persona' },
+    { type: 'text', text: STABILIZED_CONTEXT_BUDGET },
+  ])
+  const control = out.messages.find((message) => message.role === 'system')
+  assert.deepEqual(control.output_config, { effort: 'high' })
+})
