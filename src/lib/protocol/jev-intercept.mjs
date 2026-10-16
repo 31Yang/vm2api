@@ -957,7 +957,39 @@ export function policyBlockError(requestId) {
 function compileRule(category, source) {
   const text = cleanPattern(source)
   if (!text) return null
-  return { category, source: text, re: new RegExp(text, 'i') }
+  return { category, source: text, re: new RegExp(text, 'gi') }
+}
+
+const DEFENSIVE_CUE_RE =
+  /(?:不(?:要|能|得|可|许|应|会|该|允许|应当|需要)|禁止|避免|防止|预防|阻止|拒绝|无法|难以|(?<![a-z'])(?:never|cannot|can't|won't|shouldn't|mustn't|don't|doesn't|didn't|not|prevent(?:s|ing|ed)?|avoid(?:s|ing|ed)?|disallow(?:s|ing|ed)?|forbid(?:s|ing|ed)?|without)(?![a-z]))/giu
+
+// Hard rules are context-free; let policy text that forbids the same action pass.
+const DEFENSIVE_SUFFIX_RE =
+  /(?:被?禁止|不允许|不得|不应|不可|避免|防止|违规|非法|prohibited|forbidden|not allowed|disallowed|unsafe)/i
+const CLAUSE_BREAK_RE = /[.;:!?，,；：。！？\n\r]/g
+const DEFENSIVE_CONTEXT_MAX_CHARS = 48
+
+function clauseStartBefore(text, index) {
+  const prefix = String(text || '').slice(0, index)
+  let start = 0
+  for (const match of prefix.matchAll(CLAUSE_BREAK_RE)) start = Math.max(start, match.index + 1)
+  return start
+}
+
+function hasDefensiveCueBefore(text, index) {
+  const clause = text.slice(clauseStartBefore(text, index), index)
+  DEFENSIVE_CUE_RE.lastIndex = 0
+  for (const cue of clause.matchAll(DEFENSIVE_CUE_RE)) {
+    const gap = clause.slice(cue.index + cue[0].length)
+    if ([...gap].length <= DEFENSIVE_CONTEXT_MAX_CHARS) return true
+  }
+  return false
+}
+
+function isDefensivePolicyMatch(text, index, length) {
+  if (hasDefensiveCueBefore(text, index)) return true
+  const suffix = text.slice(index + length, index + length + DEFENSIVE_CONTEXT_MAX_CHARS)
+  return DEFENSIVE_SUFFIX_RE.test(suffix)
 }
 
 export function matchHardPolicy(text, extra = [], rules = null) {
@@ -974,17 +1006,23 @@ export function matchHardPolicy(text, extra = [], rules = null) {
     if (item) compiled.push(item)
   }
   for (const rule of compiled) {
-    const found = rule.re.exec(hay)
-    if (!found) continue
-    const keyword = String(found[0] || '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 40)
-    return {
-      category: rule.category,
-      evidence: rule.source.slice(0, 120),
-      keyword: keyword || rule.category,
+    let found
+    while ((found = rule.re.exec(hay))) {
+      if (isDefensivePolicyMatch(hay, found.index, found[0].length)) {
+        if (found.index === rule.re.lastIndex) rule.re.lastIndex++
+        continue
+      }
+      const keyword = String(found[0] || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 40)
+      return {
+        category: rule.category,
+        evidence: rule.source.slice(0, 120),
+        keyword: keyword || rule.category,
+      }
     }
+    rule.re.lastIndex = 0
   }
   return null
 }
