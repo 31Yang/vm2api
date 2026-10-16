@@ -10,14 +10,14 @@
 |---|---|
 | 上游 | `upstream` = github.com/dofastted/vm2api |
 | 补丁分支 | `fork-patches`（VPS `/opt/vm2api` 当前 checkout 的分支） |
-| 线上基线 | `v1.3.173`（2026-10-15 10:35 UTC 起，= v1.3.173 + 补丁 3/4/8；运行时提交 `b93f27b2`，VPS 自建镜像 `vm2api:v1.3.173-fp1`；部署与验证细节见 `../vps/vm2api-部署指南.md` §12/§15） |
+| 线上基线 | `v1.3.173`（2026-10-16 02:19 UTC 起，= v1.3.173 + 补丁 3/4/8/9；运行时提交 `b276f821`，VPS 自建镜像 `vm2api:v1.3.173-fp2`；部署与验证细节见 `../vps/vm2api-部署指南.md` §12/§15） |
 | 升级验证基线 | `v1.3.173`（2026-10-15 `git rebase --onto v1.3.173 v1.3.170 fork-patches` 完成，上游 tag `02a5718a`，rebase 前 HEAD `602b8a65`，保护 tag `pre-rebase-13173-fp1`。唯一真冲突为 `cli-hop-body.test.mjs`；补丁 3/4/8 全保留。专项 201/201、Linux Node 22 专项 248/248；Windows 全量 unit 与纯净 v1.3.173 同为 26/227 个失败文件且逐项一致；Go worker race、格式化检查、Web build 通过。VPS Linux 全量 unit 227/227 个文件通过） |
 | 历史验证基线 | `v1.3.170`（2026-10-15 `git rebase --onto v1.3.170 v1.3.148 fork-patches` 完成，上游 tag 提交 `ba35e7c2`；补丁 3/4/8 全保留，冲突裁决提交 `3b9103b0`。Linux Node 22 容器专项 118/118；Windows 全量 unit 与纯净 v1.3.170 同为 26/227 个失败文件且逐项一致；Go worker race 全绿；Biome、Prettier、gofmt、Web build 通过。VPS Linux 全量 unit 226/227 直接通过，唯一 egress 文件为测试容器二进制路径环境问题，改设挂载路径后 25/25 通过。保护 tag `pre-rebase-13170-fp1`） |
 | 更早验证基线 | `v1.3.148`（2026-10-12 `git rebase --onto v1.3.148 e1a91e46 fork-patches` 完成；补丁 3 干净、补丁 4 仅测试冲突、补丁 8 手工合并，3/4/8 均保留。格式化后专项测试 sanitize 20/20、cli-hop-body 24/24、min-max-tokens 7/7；go-worker-client Windows 13 pass / 24 skip / 0 fail，部署后 Linux 37/37。fork 与纯净 v1.3.148 全量 unit 同为 23/209 个失败文件且集合逐项一致；Go worker race 全绿；Biome/gofmt/Prettier 通过。本机镜像 `sha256:b6362e6639b9838a5a90a073740d6e640e216262ae7683300dfab3e477e55795` 已验证；实际部署因低峰传输过慢改为 VPS 从 `c38c753b` 纯净 `git archive` 构建，镜像 ID `sha256:f65143846b77c0f78f5a97d873e2557a049f3d5dc19221a51e97f6b82373ab47`，两者 VERSION 与 payload 哈希一致；保护 tag `pre-rebase-13148-fp1`） |
-| 本地对应分支 | `fork-patches`（线上运行时为 `b93f27b2`；后续仅文档提交或未部署补丁可领先。2026-10-16 本地新增补丁 9 待提交/部署。旧的 `fix/egress-self-loop` 已停用） |
+| 本地对应分支 | `fork-patches`（线上运行时为 `b276f821`；后续仅文档提交可领先。旧的 `fix/egress-self-loop` 已停用） |
 | 控制面镜像 | 自建，tag 形如 `vm2api:v<基线>-fp<N>`，由 `docker-compose.override.yml` 的 `image:` 固定（见下方流程第 4 步） |
-| VPS 线上镜像 | `vm2api:v1.3.173-fp1` = `sha256:024b5be443045bf0647afe8b5daf84915cd414c50da58d564e80799b0ac3ce22`（814753240 bytes，BuildKit manifest list ID）；镜像内 `VERSION=1.3.173`，`kin-kernel=d27bdaba…`、`cli-node=c1316b7d…`、`cc-node=be5eec49…` 均与 payload manifest 一致 |
-| 本机预构建镜像 | `vm2api:v1.3.173-fp1` = `sha256:51e9eda9a2bc83ae432208604f8423a1b510a6dfea66e15abdca38126142a79c`；镜像内 `VERSION=1.3.173`，`kin-kernel=d27bdaba…`、`cli-node=c1316b7d…`、`cc-node=be5eec49…` 均与 payload manifest 一致 |
+| VPS 线上镜像 | `vm2api:v1.3.173-fp2` = `sha256:32b7252aabeeccdb0e74d59d96c6e0ba4ec16d85cc8cdbce303b25b83eb142e4`（814758323 bytes，BuildKit manifest list ID）；镜像内 `VERSION=1.3.173`，`kin-kernel=d27bdaba…`、`cli-node=c1316b7d…`、`cc-node=be5eec49…` 均与 payload manifest 一致 |
+| 本机预构建镜像 | fp2 未做本机预构建；历史 `vm2api:v1.3.173-fp1` = `sha256:51e9eda9…` 仅作离线备选 |
 
 **升级上游新版本的流程（2026-09-29 修订）：**
 1. 本机：`git fetch upstream --tags && git fetch origin`，在 `fork-patches` 上 `git rebase v<X.Y.Z>`（冲突按下面各补丁节的「合并注意」处理）→ `npm ci && npm run test:unit` → `git push --force-with-lease origin fork-patches`。Windows 有一批平台相关既有失败（tar 备份、`/opt/vm2api` 路径映射、软链接、文件权限、Unix socket 等；v1.3.173 纯净基线 = 26/227 个失败文件，fork 必须与对应纯净 tag 逐项比对），最终以 VPS Linux 结果为准
@@ -293,6 +293,6 @@ cd /opt/vm2api && docker compose restart
 |---|---|
 | 动机 | 2026-10-16 线上 11 连 403：用户提交的权限/安全设计文档包含“不能借模板嵌套绕过限制”“不得是可绕过策略的超级用户”，上游硬正则只截取“绕过限制/绕过策略”即判 `jailbreak`。该层是低语境、高置信拦截，遇到明确否定或防御语境应放行，不能把安全文档当破限请求。 |
 | 改动文件 | `src/lib/protocol/jev-intercept.mjs`（`matchHardPolicy` 命中后检查同句/同从句内的中英文否定与防御前缀）；`test/unit/jev-intercept.test.mjs`（否定语境放行、真实命令仍拦截、多句边界不误放行）。 |
-| 验证 | 2026-10-16 本机 `node --test test/unit/jev-intercept.test.mjs test/unit/distill-detect.test.mjs` 80/80 通过（含线上两句原文、直接破限仍拦截、否定句后接正向前命令仍拦截）；`npx biome format` 通过；完整 Windows unit 26/227 个失败文件，与 v1.3.173 纯净基线一致，最终部署前仍以 VPS Linux 全量为准。 |
+| 验证 | 2026-10-16 本机 `node --test test/unit/jev-intercept.test.mjs test/unit/distill-detect.test.mjs` 80/80 通过（含线上两句原文、直接破限仍拦截、否定句后接正向前命令仍拦截）；`npx biome format` 通过；完整 Windows unit 26/227 个失败文件，与 v1.3.173 纯净基线一致。VPS Linux 全量 unit 227/227 个文件通过；verify-fixes A/C/D1/D2/K1/K2/S 全 PASS；线上两句误判样本 pass、直接破限样本 403；公网无 key 401、带 key 返回 21 个模型；迁移仍 37，设备/指纹封禁表均 0。 |
 | 合并注意 | 若上游重构硬正则执行器，保留语义：只在触发词前的同一短句内发现 `不能/不得/禁止/避免/防止/无法/not/never/cannot/must not/do not/prevent/avoid` 等防御语境时跳过该命中，并继续检查后续规则；不能全局关闭 hard regex，也不能跨句子豁免。 |
 | 下线条件 | 上游原生实现等价或更精确的否定语境豁免后，随 rebase 下线本补丁。 |
