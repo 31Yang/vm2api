@@ -301,20 +301,15 @@ export function usageFromSseEvent(event) {
   return null
 }
 
-import { semanticStatusForStreamError } from '../protocol/stream-error-status.mjs'
+import { isContextOverflowMessage, semanticStatusForStreamError } from '../protocol/stream-error-status.mjs'
 
-export { semanticStatusForStreamError } from '../protocol/stream-error-status.mjs'
+export { isContextOverflowMessage, semanticStatusForStreamError } from '../protocol/stream-error-status.mjs'
+
 // Fork patch (cli-error-semantics): a context-window rejection also arrives as a generic api_error.
 // Left alone it looks like an empty hop (same-account retries, then 502 "incomplete_response"), so
 // clients keep resending the oversized prompt and Claude Code never gets to compact.
-const CONTEXT_OVERFLOW_TEXT =
-  /prompt is too long|prompt_too_long|exceed(?:s|ed)? (?:the )?context (?:limit|window)|context (?:window|length) (?:exceeded|limit)|input is too long/i
 // Fork patch (cli-error-semantics): the wrap CLI turns an upstream stop_reason=max_tokens into this error.
 const OUTPUT_CAP_TEXT = /exceeded the (\d+) output token maximum/i
-
-export function isContextOverflowMessage(message) {
-  return CONTEXT_OVERFLOW_TEXT.test(String(message || ''))
-}
 
 /** Upstream 400 shape; keeps the lowercase phrase Claude Code looks for before compacting. */
 function contextOverflowBody(body, message) {
@@ -325,7 +320,6 @@ function contextOverflowBody(body, message) {
 function streamErrorMessage(event) {
   return String(event?.error?.message || event?.message || '')
 }
-
 
 /**
  * Kernel `map_kernel` folds every provider failure into 502 `provider_error`.
