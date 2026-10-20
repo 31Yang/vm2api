@@ -3,6 +3,12 @@ import { isPlanLimitMessage } from '../pool/quota-window.mjs'
 const AUTH_ERROR_TEXT =
   /authentication_error|token has been revoked|oauth_revoked|invalid_grant|invalid (?:bearer|x-api-key)|OAuth token has expired/i
 const PERMISSION_ERROR_TEXT = /organization does not have access to claude/i
+const CONTEXT_OVERFLOW_TEXT =
+  /prompt is too long|prompt_too_long|exceed(?:s|ed)? (?:the )?context (?:limit|window)|context (?:window|length) (?:exceeded|limit)|input is too long/i
+
+export function isContextOverflowMessage(message) {
+  return CONTEXT_OVERFLOW_TEXT.test(String(message || ''))
+}
 
 /**
  * The kernel cli-hop answers 200 and then streams `event: error` (sub2api
@@ -19,6 +25,6 @@ export function semanticStatusForStreamError(errorBody) {
   if (type === 'overloaded_error') return 529
   if (type === 'authentication_error' || AUTH_ERROR_TEXT.test(message)) return 401
   if (type === 'permission_error' || PERMISSION_ERROR_TEXT.test(message)) return 403
-  if (type === 'invalid_request_error') return 400
+  if (type === 'invalid_request_error' || isContextOverflowMessage(message)) return 400
   return 502
 }
