@@ -550,13 +550,14 @@ test('prepareCliHopBody clamps small max_tokens to 1024 for automated probe test
   })
   assert.equal(probe32.max_tokens, 1024)
 
-  // Sonnet 5 gets adaptive thinking filled in, so the thinking floor applies (fork patch cli-hop-min-tokens).
+  // v1.3.209 no longer fills thinking on an ordinary body; the plain floor applies.
   const classifier64 = prepareCliHopBody({
     model: 'claude-sonnet-5',
     max_tokens: 64,
     messages: [{ role: 'user', content: '<severity>0</severity>' }],
   })
-  assert.equal(classifier64.max_tokens, 4096)
+  assert.equal(classifier64.max_tokens, 1024)
+  assert.equal(classifier64.thinking, undefined)
 
   const normal = prepareCliHopBody({
     model: 'claude-haiku-4-5',
@@ -580,8 +581,17 @@ test('fork patch cli-hop-min-tokens: entry min_max_tokens floor no longer defeat
   )
   assert.equal(inbound.max_tokens, 128)
   const body = prepareCliHopBody(inbound)
-  assert.equal(body.thinking.type, 'adaptive')
-  assert.equal(body.max_tokens, 4096)
+  assert.equal(body.thinking, undefined)
+  assert.equal(body.max_tokens, 1024)
+
+  // Thinking-aware requests retain the larger fork floor.
+  const thinking = prepareCliHopBody({
+    model: 'claude-sonnet-5',
+    max_tokens: 128,
+    thinking: { type: 'enabled', budget_tokens: 64 },
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+  assert.equal(thinking.max_tokens, 4096)
 
   // Native cli-node owns model policy; absent caller thinking remains absent.
   const haiku = prepareCliHopBody(
@@ -641,7 +651,13 @@ test('fork patch mid-system-models: Sonnet 4.6 lifts role=system turns like Haik
 })
 
 test('fork patch mid-system-models: supported models keep role=system turns in place', () => {
-  for (const model of ['claude-opus-5', 'claude-opus-5-5', 'claude-opus-4-8', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+  for (const model of [
+    'claude-opus-5',
+    'claude-opus-5-5',
+    'claude-opus-4-8',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+  ]) {
     const body = prepareCliHopBody({
       model,
       max_tokens: 64000,
