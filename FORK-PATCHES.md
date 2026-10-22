@@ -8,7 +8,7 @@
 |---|---|
 | 上游 | `v1.3.213`（2026-10-22，`2afeb3dd`）。v1.3.211 已修复 v1.3.209 的 TTL 测试断言错误 |
 | 线上基线 | `v1.3.199-fp3`（运行时提交 `8780ee14`；补丁 3/4/8/9） |
-| 本地准备分支 | `fork-patches-v1.3.213-prep`：已 rebase 到 v1.3.213，仅保留补丁 3/4/9；补丁 8 由上游覆盖下线。用户已授权强推与 2026-10-23 04:00 低峰部署；`origin/fork-patches` 已更新为 `855afbff` |
+| 本地准备分支 | `fork-patches-v1.3.213-prep`：已 rebase 到 v1.3.213，仅保留补丁 3/4/9；补丁 8 由上游覆盖下线。用户已授权强推与 2026-10-23 04:00 低峰部署；`origin/fork-patches` 已同步 |
 | 保护点 | `pre-rebase-13209-fp3` = 原 `fork-patches`（`f90d4b25`）；v1.3.213 纯净 worktree `../vm2api-v1.3.213-baseline` |
 | 本地候选镜像 | `vm2api:v1.3.213-fp1-prep` = `sha256:65288c63448f4cbb70b21c2c3f670c1f23d859be26cf463f5a93ff04930b0123`（647,191,809 bytes）。纯净镜像 = `sha256:85b116bc693ae6e92f9241b75785572e92c2918bfac63a1971f70803471b1ebe`。均仅在本机 Docker |
 
