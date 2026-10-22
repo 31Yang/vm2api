@@ -8,7 +8,7 @@
 |---|---|
 | 上游 | `v1.3.217`（2026-10-23，tag 指向 `70011089`）。凌晨发现 v1.3.214-217，已按门槛追新验证 |
 | 线上基线 | `v1.3.217-fp1`（2026-10-23 04:28 SGT 部署，运行时提交 `624dae97`；补丁 3/4/9） |
-| 分支 | `origin/fork-patches` = `624dae97`，由 v1.3.213 准备提交按 lease 强推；旧远端 `21e9f355` 作为 lease 基准 |
+| 分支 | 运行时源码为 `624dae97`，由 v1.3.213 准备提交按 lease 强推；部署记录提交叠在其后并已同步远端 |
 | 保护点 | `pre-rebase-13209-fp3` = 原 `fork-patches`（`f90d4b25`）；纯净 worktree `../vm2api-v1.3.217-baseline` |
 | 镜像 | 本机候选 `vm2api:v1.3.217-fp1-prep` = `sha256:06f39578315a3bfe13413b7ffb51d000a667c4e14b3a290b65f4a5605f28f9ad`；VPS 运行镜像 `vm2api:v1.3.217-fp1` = `sha256:55b3c9f0818c46ad8b53af366119b465f054c206c84703d192824d221eda688c`（854,708,606 bytes） |
 | 备份/回滚 | 面板备份 `bak_3f91e0fc00d4`，SHA256 `f35435ddf524480544427848a533ba1cd1091ae8a7b3977126f4bff854ffcb6e`；保护目录 `/home/ayang/pre13199-to-13217fp1.20261022T2019Z/`；旧镜像 tag `vm2api:v1.3.199-fp3-rollback-13217fp1` |
