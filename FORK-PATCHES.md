@@ -16,7 +16,7 @@
 ## v1.3.199→217 升级要点
 
 1. 数据库迁移 `039_cluster_node_direct_links`、`040_cluster_node_platform`、`041_usage_logs_inbound_device`、`042_usage_logs_image_generation` 均已落库；042 只给 `usage_logs` 加 image 字段。迁移后回滚必须连备份恢复，不能只退镜像。
-2. v1.3.214 修复 OpenAI Responses 首个真实输出前的 failover commit；v1.3.215/216 收窄 usage 与租户槽位权限；v1.3.217 新增 GPT Images 与迁移 042。本实例未启用 GPT/Codex 槽，新增入口保持随路由默认关闭。
+2. v1.3.214 修复 OpenAI Responses 首个真实输出前的 failover commit；v1.3.215/216 收窄 usage 与租户槽位权限；v1.3.217 新增 GPT Images 与迁移 042。本实例未改 live 路由，official passthrough 关闭，且当前无 Codex/GPT 槽，Images 请求不可调度。
 3. payload 与 v1.3.213 一致：`kin-kernel=8f1347cc…`、`kin-computer=a6497083…`、`kin-worker=26b1acf8…`、`cli-node=b5054cb8…`；控制面镜像与两个槽内哈希一致，wrap sync `2/2 failed=0`。
 4. 官方 Claude/Codex passthrough 默认关闭；本实例不用扩展集群节点，不启用 direct-link。
 
