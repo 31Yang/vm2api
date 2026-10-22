@@ -62,3 +62,4 @@
 3. 迁移 039/040/041/042 落库，health OK，双槽 running/schedulable，native kernel 诊断 OK 且无冷却。
 4. verify-fixes 默认 A/C/D1/D2/K1/K2/S 全 PASS（B 显式跳过）。公网无 key 401、带 key 200 且返回 23 个模型。
 5. 启动 wrap sync 瞬态出现 1 条 `kin-console-test` 内置流式探测 `kernel_unavailable: native cli stdout closed`，发生在槽内核重启窗口；后续真实验证请求无该错误、无 5xx。
+6. 20:28:30–20:43:58 UTC 观察 15 分钟：三容器无 OOM/fatal/panic/kernel restart，20:38 后无新增请求，双槽诊断 OK，根分区可用 6.8G。备份 DB 解包复核 `quick_check=ok`，备份内最高迁移 038。
