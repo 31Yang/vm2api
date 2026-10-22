@@ -11,6 +11,7 @@
 | 本地准备分支 | `fork-patches-v1.3.209-prep`：已 rebase 到 v1.3.209，仅保留补丁 3/4/9；补丁 8 由上游 v1.3.203-209 覆盖下线。**未强推、未部署** |
 | 保护点 | `pre-rebase-13209-fp3` = rebase 前 `fork-patches`（`f90d4b25`）；纯净基线 worktree `../vm2api-v1.3.209-baseline` |
 | 补丁策略 | 默认不提 issue/PR，长期自维护；上游已覆盖时随 rebase 下线 |
+| 本地候选镜像 | `vm2api:v1.3.209-fp1-prep` = `sha256:6f5d2dc209f1560dd1dcd4a7f57c34f99d454f283887b76242d0c51a3de27ea2`（647,164,617 bytes；`VERSION=1.3.209`）。纯净对照镜像 `vm2api:v1.3.209-baseline-local` = `sha256:3be59db88dd50017a9611ee6083967d4b05dbd617653812d54a1f5664ba091f7`。两者均仅在本机 Docker，未推送/未加载 VPS |
 
 ## 升级要点（未部署）
 
@@ -56,7 +57,7 @@
 
 ## 当前验证状态
 
-已执行 Windows / Node 22 专项：
+Windows / Node 22 专项：
 
 ```text
 node --test test/unit/min-max-tokens.test.mjs test/unit/cli-hop-body.test.mjs test/unit/sanitize.test.mjs test/unit/jev-intercept.test.mjs test/unit/go-worker-client.test.mjs
@@ -66,4 +67,19 @@ node --test test/unit/min-max-tokens.test.mjs test/unit/cli-hop-body.test.mjs te
 - 纯净 v1.3.209：125 tests，89 pass / 6 fail / 30 skip。
 - 两边 6 个失败用例名称完全一致，均为上游 v1.3.209 TTL 断言与实现不一致；fork 新增 14 个测试全部通过或按 Unix 平台口径跳过。
 
-待执行：全量 Windows unit 与纯净基线逐文件比对、Linux/镜像内 unit、Go race、gofmt、Web build、格式检查、payload fetch 校验。上述完成并复核后才可请求用户执行强推与部署。
+全量与构建：
+
+- Windows 全量 unit：准备分支与纯净 v1.3.209 均为 **37/273 个失败文件，且文件集合逐项完全一致**；无 fork 回归。失败集合仍以 Windows 平台权限/路径/Unix socket/Docker 环境为主，另含上游 TTL 断言问题。
+- Linux 镜像内全量：准备分支与纯净 v1.3.209 均为 **13/273 个失败文件，且文件集合逐项完全一致**（`api-backend`、`cli-hop-body`、`convert-cache-shape`、`docker-control-image`、`egress`、`fleet-update`、`oauth-binary`、`official-cc-bootstrap`、`proxy-agent`、`proxy-ipv6`、`release`、`session-oauth-seam`、`wrap-cli-runtime`）。`wrap-cli-runtime` 在两边均 120 秒超时；其余多为镜像内无 Docker daemon/外网或上游 TTL 断言问题。无 fork 回归。
+- Linux 补丁专项：`go-worker-client + min-max-tokens + jev-intercept` 共 92/92 通过，覆盖补丁 4 的 Unix socket 流式行为、超长上下文语义、补丁 3 与补丁 9。
+- Go：`golang:1.25` 容器 `go test -race ./...` 全部通过；`gofmt -l /src/worker` 无输出。宿主机未安装 Go，`npm run test:go` / 组合 `format:check` 不能原生执行。
+- 格式与前端：Biome 通过；Web Prettier 通过；Web build 通过；Web Vitest 60 files / 473 tests 全部通过。必须按上游文档用 pnpm 10（本次 pnpm 10.34.7）；误用 pnpm 12 会忽略/删除 package.json 的 `pnpm.overrides`。
+- Payload：本机 `fetch:payload` 直连超时；经 `curl --proxy http://10.10.250.250:10250` 下载后 `npm run fetch:payload -- --check` 通过（`payload-2026.10.19-kernel-cli`，12 files）。Docker build 的 payload stage 亦通过。镜像内 `kin-kernel=8f1347cc…`、`cli-node=b5054cb8…` 与 manifest 一致。
+- 依赖：`npm audit --omit=dev` 报 1 个 moderate（`socks-proxy-agent -> socks -> ip-address@10.5.0`）。上游 v1.3.209 未处理；本次不额外引入依赖补丁，部署评审时单独确认。
+
+## 部署前剩余门槛
+
+1. v1.3.209 纯净基线自带 `cli-hop-body` TTL 断言错误，Linux/Windows 两端均复现。可选择等待上游修正后重评，或在本 fork 增加纯测试修正；当前准备分支未替上游修测试。
+2. Linux 镜像内 `wrap-cli-runtime` 在纯净与 fork 基线均超时。虽然集合一致，部署前应在具备完整测试环境的 Linux 主机或后续上游修复后复跑一次。
+3. 用户审阅 `fork-patches-v1.3.209-prep` 后，由用户按 lease 强推；代理不得推送。
+4. 获得明确部署指令后，才按 VPS 备份 → 停写/低峰 → 更新镜像 → 迁移 039/040/041 → wrap sync 2/2 → verify-fixes → 真实流量复核 → 回写文档执行。**当前未部署。**
