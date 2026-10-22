@@ -8,7 +8,7 @@
 |---|---|
 | 上游 | `v1.3.213`（2026-10-22，`2afeb3dd`）。v1.3.211 已修复 v1.3.209 的 TTL 测试断言错误 |
 | 线上基线 | `v1.3.199-fp3`（运行时提交 `8780ee14`；补丁 3/4/8/9） |
-| 本地准备分支 | `fork-patches-v1.3.213-prep`：已 rebase 到 v1.3.213，仅保留补丁 3/4/9；补丁 8 由上游覆盖下线。用户已授权强推与 2026-10-23 04:00 低峰部署 |
+| 本地准备分支 | `fork-patches-v1.3.213-prep`：已 rebase 到 v1.3.213，仅保留补丁 3/4/9；补丁 8 由上游覆盖下线。用户已授权强推与 2026-10-23 04:00 低峰部署；`origin/fork-patches` 已更新为 `855afbff` |
 | 保护点 | `pre-rebase-13209-fp3` = 原 `fork-patches`（`f90d4b25`）；v1.3.213 纯净 worktree `../vm2api-v1.3.213-baseline` |
 | 本地候选镜像 | `vm2api:v1.3.213-fp1-prep` = `sha256:65288c63448f4cbb70b21c2c3f670c1f23d859be26cf463f5a93ff04930b0123`（647,191,809 bytes）。纯净镜像 = `sha256:85b116bc693ae6e92f9241b75785572e92c2918bfac63a1971f70803471b1ebe`。均仅在本机 Docker |
 
@@ -63,7 +63,7 @@
 
 1. 只读确认 04:00 前后 5 分钟无业务请求、两个槽无长请求、VPS 磁盘/内存可用。
 2. 面板一致性备份 + 另存 live routing / distill 配置 + 当前镜像 rollback tag。
-3. 用户已授权强推：将 `fork-patches-v1.3.213-prep` 按 lease 强推到 `origin/fork-patches`。
+3. `fork-patches-v1.3.213-prep` 已按 lease 强推为 `origin/fork-patches`；若凌晨追上新版本，再按新 lease 强推一次。
 4. VPS 只用 `git reset --keep origin/fork-patches`，保留 live config。
 5. 用纯净 `git archive origin/fork-patches` 构建候选镜像；构建产物 hash 必须与本机 `sha256:65288c…` 内容口径一致（同 commit + payload）。
 6. 切 override image 并 `up -d --no-build`；确认迁移 039/040/041、wrap sync 2/2、两个槽 payload 与 health。
