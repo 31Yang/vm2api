@@ -7,8 +7,8 @@
 | 项 | 值 |
 |---|---|
 | 上游 | `v1.3.218`（2026-10-23，`d7eef6a0`） |
-| 线上基线 | `v1.3.218-fp1`（2026-10-23 01:33:45 UTC 起；运行源码/远端 `7013c520`；补丁 3/4/9；迁移至 042） |
-| 准备分支 | `fork-patches-v1.3.218-prep`，保留补丁 3/4/9 |
+| 线上基线 | `v1.3.218-fp1`（2026-10-23 01:33:45 UTC 起；运行源码 `7013c520`；补丁 3/4/9；迁移至 042） |
+| 分支 | `fork-patches-v1.3.218-prep` / `origin/fork-patches`（允许仅文档提交领先运行源码），保留补丁 3/4/9 |
 | 保护点 | `pre-rebase-13209-fp3`；v1.3.218 纯净 worktree `../vm2api-v1.3.218-baseline` |
 | 镜像 | 本机候选 `vm2api:v1.3.218-fp1-prep` = `sha256:71837f65…21a`；VPS 运行 `vm2api:v1.3.218-fp1` = `sha256:119df3deb26abfde75991fc0a2dfc31dbaababc0a8df42d4e069ed81532d02d5`（854,694,197 bytes）。纯净对照 = `sha256:4a7f18c1…122` |
 | 备份/回滚 | 面板备份 `bak_d36e06b608e8`（10,471,304 bytes，SHA256 `97efb6d2…8808`）；保护目录 `/home/ayang/pre13217-to-13218fp1.20261023T012705Z/`；旧镜像 tag `vm2api:v1.3.217-fp1-rollback-13218fp1` |
@@ -56,9 +56,9 @@
 - 候选镜像 `VERSION=1.3.218`；`kin-kernel=8f1347cc…`、`kin-computer=a6497083…`、`kin-worker=26b1acf8…`、`cli-node=b5054cb8…` 与 manifest 一致。
 - `npm audit --omit=dev` 仍有上游 `socks-proxy-agent -> socks -> ip-address@10.5.0` moderate，未额外改依赖。
 
-## 部署门槛
+## 下次升级标准门槛
 
-1. VPS 最近 5 分钟业务请求为 0；若非 0，等待短空窗。
+1. 默认选择 04:00–08:00 空窗，且最近 5 分钟业务请求为 0；用户明确要求立即部署时可跳过等待，但必须记录切换窗口在途请求结果。
 2. 保留/备份 live routing、distill rules、`.env` 与 rollback compose；创建面板一致性备份。
 3. `git fetch origin` 后用 `git reset --keep origin/fork-patches`，不得覆盖 live 配置。
 4. 从纯净 `git archive origin/fork-patches` 构建 `vm2api:v1.3.218-fp1`，切换后 `up -d --no-build`。
