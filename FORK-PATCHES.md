@@ -67,7 +67,8 @@
 ## 2026-10-23 部署结论
 
 1. 用户明确要求立即部署，未等待业务空窗；切换窗口既有业务请求均 200，无 5xx。
-2. 01:33:45 UTC 切换 `vm2api:v1.3.218-fp1`；槽容器未重启，无迁移/wrap sync/payload 变化。
+2. 01:33:45 UTC 切换 `vm2api:v1.3.218-fp1`；槽容器未重启，无迁移/wrap sync/payload 变化。启动后自动移除废弃 `codex.official_passthrough` 键，routing SHA256 `4197add1…c06d`，distill 保持 `97a1b693…e2b0`。
 3. health OK，迁移最高 042；vm-01/vm-02 native kernel healthy，ready_slots 20/19，credential fresh。
 4. verify-fixes A/C/D1/D2/K1/K2/S 全 PASS；K1/K2 出站均为 system 2 点 + user 2 点，共 4 个 1h 断点。
 5. 公网 models 无 key 401、带 key 200 且 23 个模型。控制面启动期仅 bridge-heal 重建两个 egress helper，无 kernel restart/OOM。
+6. 01:33:45–01:48:45 UTC 观察 15 分钟无 OOM/fatal/panic/kernel restart/5xx；97 条 200、46 条 429（37 条为 `ysg` key 并发 4 本地限流），`HPE_INVALID_EOF_STATE` 为客户端提前断开/重试。清理 4.453GB build cache 后根分区可用 8.7G。
