@@ -7,10 +7,11 @@
 | 项 | 值 |
 |---|---|
 | 上游 | `v1.3.218`（2026-10-23，`d7eef6a0`） |
-| 线上前基线 | `v1.3.217-fp1`（运行时提交 `624dae97`；补丁 3/4/9；迁移至 042） |
-| 本地准备分支 | `fork-patches-v1.3.218-prep`，保留补丁 3/4/9 |
+| 线上基线 | `v1.3.218-fp1`（2026-10-23 01:33:45 UTC 起；运行源码/远端 `7013c520`；补丁 3/4/9；迁移至 042） |
+| 准备分支 | `fork-patches-v1.3.218-prep`，保留补丁 3/4/9 |
 | 保护点 | `pre-rebase-13209-fp3`；v1.3.218 纯净 worktree `../vm2api-v1.3.218-baseline` |
-| 本地候选镜像 | `vm2api:v1.3.218-fp1-prep` = `sha256:71837f656d93afba4e713e999100eb5299ef145e22d64dcee3a8f6ec6c2c721a`（647,244,269 bytes）。纯净对照 = `sha256:4a7f18c120f42df128b4cf63a0aa0cd06d6ea46fface3dbd488692daf8c47122` |
+| 镜像 | 本机候选 `vm2api:v1.3.218-fp1-prep` = `sha256:71837f65…21a`；VPS 运行 `vm2api:v1.3.218-fp1` = `sha256:119df3deb26abfde75991fc0a2dfc31dbaababc0a8df42d4e069ed81532d02d5`（854,694,197 bytes）。纯净对照 = `sha256:4a7f18c1…122` |
+| 备份/回滚 | 面板备份 `bak_d36e06b608e8`（10,471,304 bytes，SHA256 `97efb6d2…8808`）；保护目录 `/home/ayang/pre13217-to-13218fp1.20261023T012705Z/`；旧镜像 tag `vm2api:v1.3.217-fp1-rollback-13218fp1` |
 
 ## v1.3.217→218 变化
 
@@ -62,3 +63,11 @@
 3. `git fetch origin` 后用 `git reset --keep origin/fork-patches`，不得覆盖 live 配置。
 4. 从纯净 `git archive origin/fork-patches` 构建 `vm2api:v1.3.218-fp1`，切换后 `up -d --no-build`。
 5. 验收 health、双槽状态、迁移仍至 042、verify-fixes 默认用例、公网 401/200、真实小请求和 15 分钟观察。
+
+## 2026-10-23 部署结论
+
+1. 用户明确要求立即部署，未等待业务空窗；切换窗口既有业务请求均 200，无 5xx。
+2. 01:33:45 UTC 切换 `vm2api:v1.3.218-fp1`；槽容器未重启，无迁移/wrap sync/payload 变化。
+3. health OK，迁移最高 042；vm-01/vm-02 native kernel healthy，ready_slots 20/19，credential fresh。
+4. verify-fixes A/C/D1/D2/K1/K2/S 全 PASS；K1/K2 出站均为 system 2 点 + user 2 点，共 4 个 1h 断点。
+5. 公网 models 无 key 401、带 key 200 且 23 个模型。控制面启动期仅 bridge-heal 重建两个 egress helper，无 kernel restart/OOM。
