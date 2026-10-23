@@ -38,6 +38,12 @@
 - 保留。上游仍无等价防御语境豁免；语义限定同一短句与近距离后缀。
 - 专项通过，直接破限仍拦截。
 
+### 候选补丁 10：OAuth 400 错误码透传与自动停调度（未实现）
+
+- 动机：2026-10-23 vm-02 连续 10 条 400 `refresh_failed`，槽未被自动停调度，只能人工禁用并重新登录。
+- 拟改文件：`worker/internal/oauthcmd/oauthcmd.go`（保留 `RefreshError.Code`）、`src/lib/transport/kernel-router.mjs` 或凭证调度分类（将 HTTP 400 + `refresh_failed` 视为 fatal）、对应 Go/Node 单测。
+- 验收：`invalid_grant` / `invalid_refresh_token` / 空 code + HTTP 400 均自动 paused；429、5xx、网络超时仍 retryable；重新导入凭证后清除 `refresh_error` 并恢复调度。
+
 ## Retired patches
 
 | 补丁 | 下线版本 | 结论 |
