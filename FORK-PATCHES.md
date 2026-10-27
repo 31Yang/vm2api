@@ -9,7 +9,7 @@
 | 上游 | `v1.4.011`（2026-10-27，`3ca3e01c`；上游 `main` 已强制重写，fetch 时大量旧 tag rejected 属预期） |
 | 线上基线 | `v1.4.011-fp2`（2026-10-27 05:13:22 UTC 起；运行源码 `67a81360`；补丁 3/4/9/11；迁移至 042） |
 | 分支 | `fork-patches-v1.4.011-prep` = `origin/fork-patches` = `67a81360`，保留补丁 3/4/9/11 |
-| 保护点 | 旧保护 `pre-rebase-13209-fp3`、`pre-rebase-13218-fc6a626b`、`pre-rebase-14010-96704234`；v1.4.011 纯净 worktree `../vm2api-v1.4.010-baseline`，升级未闭环前暂保留 v1.3.218 baseline |
+| 保护点 | 旧保护 `pre-rebase-13209-fp3`、`pre-rebase-13218-fc6a626b`、`pre-rebase-14010-96704234`；当前唯一纯净 worktree `../vm2api-v1.4.011-baseline` |
 | baseline 纪律 | 上游纯净对照 worktree 只用于测试归因。升级成功、验收与文档留档完成后，删除全部历史 `vm2api-v*-baseline`，只保留本次最新版本一个；失败未闭环前可临时保留新旧两个 |
 | 镜像 | VPS 运行 `vm2api:v1.4.011-fp2` = `sha256:336c10f31ab54352b220515211e19c5b392fd63dc5372f273a61552c1785df3c`（856,247,163 bytes）；本机对照 `vm2api:v1.4.011-fp2-prep` = `sha256:730d0c08b97d41f66e0eed4ba6ec207d8c7196e08e50ec54fb571769b53f03f2` |
 | 备份/回滚 | 本次面板备份 `bak_f411434ec4e7`（18,947,509 bytes，SHA256 `33e2a8dc…e05796`）；保护目录 `/home/ayang/pre13218-to-14010prep.20261027T022547Z/`；快速回滚镜像 `vm2api:v1.3.218-fp1-rollback-14010fp1` + `git reset --keep 7013c520`，无 DB 结构变化 |
