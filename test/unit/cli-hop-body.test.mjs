@@ -89,6 +89,33 @@ test('cli-hop normalizes mixed caller markers to the official template', () => {
   assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
 })
 
+test('fork patch official-full markers: shaped system stays intact and users still get breakpoints', () => {
+  const system = [
+    { type: 'text', text: '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__', cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: 'CALLER SYSTEM' },
+  ]
+  const body = prepareCliHopBody(
+    {
+      model: 'claude-haiku-4-5',
+      max_tokens: 128,
+      system,
+      messages: [
+        { role: 'user', content: 'u1' },
+        { role: 'assistant', content: 'a1' },
+        { role: 'user', content: 'u2' },
+        { role: 'assistant', content: 'a2' },
+        { role: 'user', content: 'u3' },
+      ],
+    },
+    { cacheTtl: '1h' },
+  )
+  assert.deepEqual(body.system, system)
+  assert.deepEqual(
+    body.messages.map((message) => message.content[0].cache_control || null),
+    [null, null, { type: 'ephemeral', ttl: '1h' }, null, { type: 'ephemeral', ttl: '1h' }],
+  )
+})
+
 test('caller environment stays behind the official identity', () => {
   const caller = '  # Environment\n - Timezone: Pacific/Auckland\n - Caller-only fact: KEEP_ME\n '
   const body = prepareCliHopBody(
