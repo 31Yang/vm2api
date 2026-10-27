@@ -58,6 +58,7 @@
 ## v1.4.010 准备验证
 
 - VPS 只读预检（2026-10-27 10:14 SGT）：`/opt/vm2api` 在 `fork-patches@7013c520`，运行镜像 `vm2api:v1.3.218-fp1`，health `status=ok`，双槽与 `anytls-socks` 运行中；git 3 项 live 差异、根分区可用 9.5G。未执行 fetch/build/backup/restart。
+- VPS 预置（2026-10-27 10:31 SGT，未部署）：`origin/fork-patches` 已 fetch 到 `e771682d`；保护目录 `/home/ayang/pre13218-to-14010prep.20261027T022547Z/`（0700）保存 `.env`、compose、live config、构建日志与状态。面板备份 `bak_f411434ec4e7`，18,947,509 bytes，SHA256 `33e2a8dc…e05796` 已复核。当前镜像另打 `vm2api:v1.3.218-fp1-rollback-14010fp1`。VPS 从纯净 archive 构建 `vm2api:v1.4.010-fp1-prep` = `sha256:d28f2bb0…5be0`（856,241,596 bytes），`VERSION=1.4.010` 且 6 个关键 payload 哈希与 manifest 一致。运行容器、HEAD 与 3 项 live 差异保持不变；根分区剩余 7.4G。
 - 补丁专项：fork 相关 4 个测试文件 `125 tests / 87 pass / 37 skip / 1 fail`；唯一失败为纯净 v1.4.010 同样失败的 `go-worker-client` beta 断言，属上游 tip 既有 Windows 口径。补丁 3/4/9 对应用例全部通过。
 - Windows 全量：fork 与纯净 v1.4.010 均为 `59/291` 个失败文件，逐文件集合一致；口径为上游 beta/persona 断言、Windows SQLite `EBUSY` 清理锁、路径/权限/Unix Docker 依赖等平台问题。
 - Go race 在 `golang:1.25-bookworm` 容器全部通过；Biome 通过；`/usr/local/go/bin/gofmt -l worker` 无输出。
