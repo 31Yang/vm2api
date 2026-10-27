@@ -6,21 +6,22 @@
 
 | 项 | 值 |
 |---|---|
-| 上游 | `v1.4.010`（2026-10-27，`165b4991`；上游 `main` 已强制重写，fetch 时大量旧 tag rejected 属预期） |
+| 上游 | `v1.4.011`（2026-10-27，`3ca3e01c`；上游 `main` 已强制重写，fetch 时大量旧 tag rejected 属预期） |
 | 线上基线 | `v1.3.218-fp1`（2026-10-23 01:33:45 UTC 起；运行源码 `7013c520`；补丁 3/4/9；迁移至 042） |
-| 准备分支 | 本机 `fork-patches-v1.4.010-prep`（未推送、未部署）；`origin/fork-patches` 仍在 `fc6a626b`，保留补丁 3/4/9 |
-| 保护点 | 旧保护 `pre-rebase-13209-fp3`、本次本机保护 `pre-rebase-13218-fc6a626b`；v1.4.010 纯净 worktree `../vm2api-v1.4.010-baseline`，升级未闭环前暂保留 v1.3.218 baseline |
+| 准备分支 | 本机 `fork-patches-v1.4.011-prep`（未推送、未部署）；`origin/fork-patches` 仍在 v1.4.010 预置记录 `96704234`，保留补丁 3/4/9 |
+| 保护点 | 旧保护 `pre-rebase-13209-fp3`、`pre-rebase-13218-fc6a626b`、`pre-rebase-14010-96704234`；v1.4.011 纯净 worktree `../vm2api-v1.4.010-baseline`，升级未闭环前暂保留 v1.3.218 baseline |
 | baseline 纪律 | 上游纯净对照 worktree 只用于测试归因。升级成功、验收与文档留档完成后，删除全部历史 `vm2api-v*-baseline`，只保留本次最新版本一个；失败未闭环前可临时保留新旧两个 |
-| 镜像 | 本机候选 `vm2api:v1.4.010-fp1-prep` = `sha256:99556e47519d325de5ab610ebe1912b4f3f3b2492bcd83fefe6aa38676ab53e2`（648,087,796 bytes）；VPS 运行 `vm2api:v1.3.218-fp1` = `sha256:119df3deb26abfde75991fc0a2dfc31dbaababc0a8df42d4e069ed81532d02d5`（854,694,197 bytes）。v1.4.010 纯净镜像尚未在 VPS 构建 |
+| 镜像 | 本机候选 `vm2api:v1.4.011-fp1-prep` = `sha256:59ad48cd706871811513df68b09340a840a0eabb7197dc478798da880b7602ca`（648,092,394 bytes）；VPS 运行 `vm2api:v1.3.218-fp1` = `sha256:119df3deb26abfde75991fc0a2dfc31dbaababc0a8df42d4e069ed81532d02d5`。VPS 已预置但尚未启用 `v1.4.010-fp1-prep` |
 | 备份/回滚 | 面板备份 `bak_d36e06b608e8`（10,471,304 bytes，SHA256 `97efb6d2…8808`）；保护目录 `/home/ayang/pre13217-to-13218fp1.20261023T012705Z/`；旧镜像 tag `vm2api:v1.3.217-fp1-rollback-13218fp1` |
 
-## v1.3.218→v1.4.010 变化
+## v1.3.218→v1.4.011 变化
 
 1. 区间共 212 个提交：新增 official_303 / 2.1.303 出站参照、模型缺省 effort、调度状态与 session seat、历史 5H/7D 窗口、面板 VM 池与统计重做、OAuth 身份头保留等；无新增 DB 迁移（仍止于 042）。
 2. payload 从 `payload-2026.10.22-computer-linux` 换为 `payload-2026.10.26-cli-effort`：`kin-worker=d6b29f11…71b`、`kin-egress=0bf1eeb0…277`、`kin-slot-gate=78f78d59…859`、`cli-node=f29bbfa4…b68`；Go helper 不再由 Dockerfile 源码编译，改按 manifest 下载。
 3. v1.4.005 起本机槽容器改为 `restart=no` 并由控制面先恢复出口再拉起；`src/server.mjs` 启动早期执行 `syncLocalSlotRestartPolicies`，迁移失败会阻止控制面启动。
 4. v1.4.007 起 `cli-node` 必须同步到槽内；v1.4.009 起升级路径改为经新控制面执行 `wrap-cli/sync restart:true` 与 fleet telemetry。镜像 entrypoint 在 payload 变化且 `KIN_AUTO_SYNC_WRAP=1` 时会后台执行 `sync-wrap-cli.mjs`。
 5. 部署顺序必须是：构建/切换新控制面 → 确认 health 与 `restart=no` 迁移成功 → 触发/确认 wrap sync 与 fleet payload 刷新 → 验收。不要先重启 Docker；不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+6. v1.4.011 仅追加 #761：KVM 槽恢复时回填 MAC / disk serial，env 不完整的旧容器强制重建；无迁移、无 payload/依赖变化，不影响本机 Docker 槽。
 
 ## Active patches
 
@@ -55,12 +56,13 @@
 | 7 thinking-display token | v1.3.125 | 上游 beta/body 管线重写后失效 |
 | 8 lift total_tokens 钉值 | v1.3.209 | 上游稳定官方 system/messages 前缀与 lift 模型，覆盖原目标 |
 
-## v1.4.010 准备验证
+## v1.4.011 准备验证
 
 - VPS 只读预检（2026-10-27 10:14 SGT）：`/opt/vm2api` 在 `fork-patches@7013c520`，运行镜像 `vm2api:v1.3.218-fp1`，health `status=ok`，双槽与 `anytls-socks` 运行中；git 3 项 live 差异、根分区可用 9.5G。未执行 fetch/build/backup/restart。
 - VPS 预置（2026-10-27 10:31 SGT，未部署）：`origin/fork-patches` 已 fetch 到 `e771682d`；保护目录 `/home/ayang/pre13218-to-14010prep.20261027T022547Z/`（0700）保存 `.env`、compose、live config、构建日志与状态。面板备份 `bak_f411434ec4e7`，18,947,509 bytes，SHA256 `33e2a8dc…e05796` 已复核。当前镜像另打 `vm2api:v1.3.218-fp1-rollback-14010fp1`。VPS 从纯净 archive 构建 `vm2api:v1.4.010-fp1-prep` = `sha256:d28f2bb0…5be0`（856,241,596 bytes），`VERSION=1.4.010` 且 6 个关键 payload 哈希与 manifest 一致。运行容器、HEAD 与 3 项 live 差异保持不变；根分区剩余 7.4G。
 - 补丁专项：fork 相关 4 个测试文件 `125 tests / 87 pass / 37 skip / 1 fail`；唯一失败为纯净 v1.4.010 同样失败的 `go-worker-client` beta 断言，属上游 tip 既有 Windows 口径。补丁 3/4/9 对应用例全部通过。
-- Windows 全量：fork 与纯净 v1.4.010 均为 `59/291` 个失败文件，逐文件集合一致；口径为上游 beta/persona 断言、Windows SQLite `EBUSY` 清理锁、路径/权限/Unix Docker 依赖等平台问题。
+- v1.4.011 增量专项：补丁 3/4/9 与新增 `kvm-machine`、`remote-slot-restart-loop` 共 `140 tests / 102 pass / 37 skip / 1 fail`；唯一失败仍是纯净同版一致的 `go-worker-client` beta 断言。Go race 与 gofmt 通过，本地候选镜像 `VERSION=1.4.011` 且 payload 哈希一致。
+- Windows 全量：fork 与纯净 v1.4.011 均为 `59/292` 个失败文件，逐文件集合一致；口径为上游 beta/persona 断言、Windows SQLite `EBUSY` 清理锁、路径/权限/Unix Docker 依赖等平台问题。
 - Go race 在 `golang:1.25-bookworm` 容器全部通过；Biome 通过；`/usr/local/go/bin/gofmt -l worker` 无输出。
 - Linux 镜像内全量：fork 与纯净均为 `37/291` 个失败文件，集合一致；其中 `wrap-cli-runtime.test.mjs` 在本机容器缺运行时依赖且长期挂起，双侧同卡同判，最终人工终止后计入失败。
 - Docker Web build 通过。fork 与纯净在干净 web stage 容器中 Vitest 均为 `68 files / 523 tests，7 failed`，失败集合均为 `src/lib/persona-template.test.ts`，属上游 v1.4.010 tip 既有断言失败。
@@ -72,7 +74,7 @@
 1. 默认选择 04:00–08:00 空窗，且最近 5 分钟业务请求为 0；用户明确要求立即部署时可跳过等待，但必须记录切换窗口在途请求结果。
 2. 用户审查后自行 `--force-with-lease` 推送本机 `fork-patches-v1.4.010-prep` 到 `origin/fork-patches`；旧远端值为 `fc6a626bdd25d1285916ebaf48c450b0fd930393`。
 3. 保留/备份 live routing、distill rules、`.env` 与 rollback compose；创建面板一致性备份。
-4. VPS `git fetch origin` 后用 `git reset --keep origin/fork-patches`，不得覆盖 live 配置；从纯净 `git archive origin/fork-patches` 构建 `vm2api:v1.4.010-fp1`，VPS 构建不使用 Windows 侧代理参数。
+4. VPS `git fetch origin` 后用 `git reset --keep origin/fork-patches`，不得覆盖 live 配置；从纯净 `git archive origin/fork-patches` 构建 `vm2api:v1.4.011-fp1`，VPS 构建不使用 Windows 侧代理参数。
 5. 切换 `up -d --no-build` 后先验收控制面 health、启动日志与 `restart=no` 迁移；确认成功前不得重启 Docker。随后确认/触发 `wrap-cli/sync restart:true` 与 fleet payload 刷新，核对 `cli-node/kin-worker/kin-egress/kin-slot-gate` 哈希。
 6. 验收 health、双槽状态、迁移仍至 042、verify-fixes 默认用例、公网 401/200、真实小请求和 15 分钟观察。
 7. 升级成功并完成文档留档后，用 `git worktree remove` 清理历史 baseline，只保留本次最新版本；最后 `git worktree prune` 并复核 `git worktree list`。
