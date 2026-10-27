@@ -40,6 +40,13 @@
 - 保留。上游仍无等价防御语境豁免；语义限定同一短句与近距离后缀。
 - 专项通过，直接破限仍拦截。
 
+### 补丁 11：official_full 模板保留 user 缓存断点
+
+- 动机：v1.4.010 起 shaped official_full system 含 `__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__`，上游因此同时跳过 system 重建与 user 断点；第三方多轮请求只剩 system 断点，K2 cache_read 为 0，纯净 v1.4.011 的 `cache-breakpoints` 也失败。
+- 改动文件：`src/lib/protocol/outbound-attempt.mjs` 与 `test/unit/cli-hop-body.test.mjs`。
+- 行为：保留 shaped system 原文；除 official_303 lean 与 prepared-zero 外，仍调用 `officialMessageMarker` 给最后两条 user 补 1h 断点。
+- 本地验收：新增 shaped official_full 用例通过；补丁 3/4/9 专项仍仅剩纯净同版一致的 `go-worker-client` beta 断言失败；official_303 / cache-breakpoints 失败集合与纯净 v1.4.011 一致。线上 K1/K2 待热修镜像部署后复测。
+
 ### 候选补丁 10：OAuth 400 错误码透传与自动停调度（未实现）
 
 - 动机：2026-10-23 vm-02 连续 10 条 400 `refresh_failed`，槽未被自动停调度，只能人工禁用并重新登录。
