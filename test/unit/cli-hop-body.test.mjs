@@ -112,7 +112,8 @@ test('fork patch official-full markers: shaped system stays intact and users sti
   assert.deepEqual(body.system, system)
   assert.deepEqual(
     body.messages.map((message) => message.content[0].cache_control || null),
-    [null, null, { type: 'ephemeral', ttl: '1h' }, null, { type: 'ephemeral', ttl: '1h' }],
+    // Upstream shortens fallback anchors to 5m when an existing marker has no TTL.
+    [null, null, { type: 'ephemeral', ttl: '5m' }, null, { type: 'ephemeral', ttl: '5m' }],
   )
 })
 
