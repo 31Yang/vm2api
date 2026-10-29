@@ -1269,7 +1269,6 @@ test('workerHealth fails closed when socket is absent', async () => {
   assert.equal(result.ok, false)
 })
 
-<<<<<<< HEAD
 for (const call of [callGoWorker, streamGoWorker]) {
   unixTest(`${call.name} maps plain-text kernel 413 without losing structured errors`, async () => {
     for (const structured of [false, true]) {
@@ -1373,7 +1372,6 @@ unixTest('Codex clients enforce the panel limit on their serialized envelope', a
       assert.equal(result.transportError, false)
     }
     assert.equal(requests, 0)
-=======
 // ---- Fork patch (cli-error-semantics) ----
 
 const CAP_ERROR =
@@ -1606,7 +1604,6 @@ unixTest('fork patch cli-error-semantics: a streamed context-window rejection be
     assert.equal(result.terminalState, 'rejected')
     assert.match(result.body.error.message, /prompt is too long/)
     assert.equal(lines.length, 0)
->>>>>>> 802d3ae5 (fix(transport): cli-hop output-cap stop and context-overflow 400)
   } finally {
     await fx.close()
   }

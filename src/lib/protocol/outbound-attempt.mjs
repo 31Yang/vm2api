@@ -335,7 +335,11 @@ export function prepareCliHopBody(
     body.auto_compact_window = windowTokens
   }
   delete body.metadata
-<<<<<<< HEAD
+  // Fork patch (cli-hop-min-tokens): raise small explicit budgets before the
+  // native CLI applies its own model/output policy.
+  if (body.max_tokens != null && Number(body.max_tokens) < CLI_HOP_MIN_MAX_TOKENS) {
+    body.max_tokens = CLI_HOP_MIN_MAX_TOKENS
+  }
   // Rendered presets may disable or edit billing and the dynamic boundary.
   // The handler passes its resolved preset only after rendering; text detection
   // is a compatibility fallback for callers without that assembly state.
@@ -353,26 +357,6 @@ export function prepareCliHopBody(
     (personaPreset != null ||
       (Array.isArray(body.system) &&
         body.system.some((block) => textOf(block).trim() === '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')))
-=======
-  // Fork patch (cli-hop-min-tokens): the wrap CLI throws a fatal "max_output_tokens" error when the
-  // response reaches max_tokens. Probes, ping tests, and third-party UI connection checks send
-  // max_tokens: 1 (or other small numbers), and the entry min_max_tokens floor (default 128) can
-  // lift a budget past an upstream-side clamp, so floor every small budget here instead.
-  if (body.max_tokens != null && Number(body.max_tokens) < CLI_HOP_MIN_MAX_TOKENS) {
-    body.max_tokens = CLI_HOP_MIN_MAX_TOKENS
-  }
-  // Official family keeps the inbound system and its markers. Rewriting them
-  // into the persona template (billing / reporting / 1h) is what diverges from
-  // the captured Claude Code body: two ephemeral blocks, TTL omitted.
-  const assembledTemplate = (system) => {
-    const blocks = Array.isArray(system) ? system : []
-    const texts = blocks.map(textOf)
-    return (
-      texts.some((text) => text.trim() === '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__') ||
-      texts.some((text) => /^x-anthropic-billing-header/i.test(text) && /prompt_version=</.test(text))
-    )
-  }
->>>>>>> b3abf913 (fix(protocol): cli-hop mid-system models and small max_tokens floor)
   if (!preserveSystem) {
     if (!lean && !shaped && !preparedZero) {
       const leftover = stripCliOwnedSystem(body.system, { preserveCallerEnvironment })
