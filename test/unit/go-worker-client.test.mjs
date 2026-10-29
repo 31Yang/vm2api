@@ -1372,6 +1372,11 @@ unixTest('Codex clients enforce the panel limit on their serialized envelope', a
       assert.equal(result.transportError, false)
     }
     assert.equal(requests, 0)
+  } finally {
+    await fx.close()
+  }
+})
+
 // ---- Fork patch (cli-error-semantics) ----
 
 const CAP_ERROR =
