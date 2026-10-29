@@ -6,13 +6,13 @@
 
 | 项 | 值 |
 |---|---|
-| 上游 | 目标 `v1.4.025`（2026-10-28，`75a18df2`；线上仍为 `v1.4.011`） |
-| 线上基线 | `v1.4.011-fp2`（2026-10-27 05:13:22 UTC 起；运行源码 `67a81360`；补丁 3/4/9/11；迁移至 042） |
-| 准备分支 | `origin/fork-patches=8c194533` 已强推；VPS9 生产源码仍为 `67a81360`，VPS10 并行主控运行 `8c194533` |
-| 保护点 | 旧保护 `pre-rebase-13209-fp3`、`pre-rebase-13218-fc6a626b`、`pre-rebase-14010-96704234`、`pre-rebase-14025-8ef18c79`；升级失败未闭环前保留 `v1.4.011` 与 `v1.4.025` 两个纯净 worktree |
+| 上游 | `v1.4.025`（2026-10-28，`75a18df2`）已部署 |
+| 线上基线 | VPS10 生产 `v1.4.025-fp1`（2026-10-29 起；运行镜像源码 `8c194533`；补丁 3/4/9；迁移至 047）。VPS9 旧 `v1.4.011-fp2` 停止保留回滚 |
+| 分支 | `origin/fork-patches` 当前为文档提交 `c0353b10`；运行镜像固定在源码 `8c194533`，后续文档提交不改变已运行镜像 |
+| 保护点 | 旧保护 `pre-rebase-13209-fp3`、`pre-rebase-13218-fc6a626b`、`pre-rebase-14010-96704234`、`pre-rebase-14025-8ef18c79`；当前仅保留 `../vm2api-v1.4.025-baseline` 一个纯净 worktree |
 | baseline 纪律 | 上游纯净对照 worktree 只用于测试归因。升级成功、验收与文档留档完成后，删除全部历史 `vm2api-v*-baseline`，只保留本次最新版本一个；失败未闭环前可临时保留新旧两个 |
-| 镜像 | VPS 运行 `vm2api:v1.4.011-fp2` = `sha256:336c10f31ab54352b220515211e19c5b392fd63dc5372f273a61552c1785df3c`；本机候选 `vm2api:v1.4.025-fp1-prep` = `sha256:a0616374b436a790d0ba9781cf4dac91c4082bd7f9869cda5f962f4bb4e27b90` |
-| 备份/回滚 | 本次面板备份 `bak_f411434ec4e7`（18,947,509 bytes，SHA256 `33e2a8dc…e05796`）；保护目录 `/home/ayang/pre13218-to-14010prep.20261027T022547Z/`；快速回滚镜像 `vm2api:v1.3.218-fp1-rollback-14010fp1` + `git reset --keep 7013c520`，无 DB 结构变化 |
+| 镜像 | VPS10 运行 `vm2api:v1.4.025-fp1` = `sha256:17a3ca329d251b43714917a490eb58fde6b2ad67f8775b69364581e310c812b0`；本机候选 `vm2api:v1.4.025-fp1-prep` = `sha256:a0616374b436a790d0ba9781cf4dac91c4082bd7f9869cda5f962f4bb4e27b90` |
+| 备份/回滚 | 生产迁移前 VPS9 备份 `bak_271bcbbc0f1d`（23,228,530 bytes，SHA256 `fb9fa123…90ad4`）；VPS10 空库快照 `/opt/vm2api-primary/data.empty-pre-restore.20261029T050345Z`。DB 已到 047，回滚必须先备份 VPS10 当前库，再恢复到升级后的 VPS9，不能只切旧镜像 |
 
 ## v1.4.011→v1.4.025 变化
 
@@ -56,27 +56,28 @@
 | 8 lift total_tokens 钉值 | v1.3.209 | 上游稳定官方 system/messages 前缀与 lift 模型，覆盖原目标 |
 | 11 official_full user 断点 | v1.4.025 | 上游 #797 的 shapedFallback 在缺少 messages marker 时按预算/TTL 补点；保留 fork 测试作回归 |
 
-## 当前验证结论（v1.4.025 准备态）
+## 当前验证结论（v1.4.025 生产态）
 
 - Windows 官方隔离单测：fork 与纯净 v1.4.025 均为 46/313 个失败文件，且逐文件失败集合一致；抽样为 Unix socket `EACCES`、SQLite `EBUSY`、`/opt` 路径解析等平台依赖。
 - Linux 镜像内全量受容器缺少宿主 Docker/cgroup/特权执行环境影响，双侧输出一致；`wrap-cli-runtime` 双侧同样在镜像内挂起，已按已知环境缺口记录。fork 3/4/9/11 回归测试在 Linux 候选镜像内全部通过。
 - Go race、gofmt、Biome、Web Vitest、Web build、Docker build 通过。Web 本机验证需使用 Dockerfile 同源的 pnpm 10；pnpm 12.6 会忽略 package.json 的 `pnpm.overrides` 并破坏本地链接。
 - 候选镜像 `VERSION=1.4.025`；7 个关键 payload 哈希均与 `payload-2026.10.28-kernel-agent-id` manifest 一致。`npm audit --omit=dev` 仍有上游 `socks -> ip-address` moderate，未额外改依赖。
 
-## 下次升级标准门槛
+## 下次升级标准门槛（VPS10 生产）
 
 1. 默认选择 04:00–08:00 空窗，且最近 5 分钟业务请求为 0；用户明确要求立即部署时可跳过等待，但必须记录切换窗口在途请求结果。
 2. rebase 后由用户审查并执行 `--force-with-lease` 推送；若只是在当前远端 HEAD 上追加热修提交，可普通 push。
-3. 保留/备份 live routing、distill rules、`.env` 与 rollback compose；创建面板一致性备份。
-4. VPS `git fetch origin` 后用 `git reset --keep origin/fork-patches`，不得覆盖 live 配置；若 live routing/distill 与上游默认同文件演进导致 reset 拒绝，先快照 live 值，恢复旧 HEAD 配置完成 reset，再做“live 值 + 新默认值”合并。随后从纯净 `git archive origin/fork-patches` 构建下一版 `fp<N>` 镜像，VPS 构建不使用 Windows 侧代理参数。
-5. 切换 `up -d --no-build` 后先验收控制面 health、启动日志与 `restart=no` 迁移；确认成功前不得重启 Docker。随后确认/触发 `wrap-cli/sync restart:true` 与 fleet payload 刷新，核对 `cli-node/kin-worker/kin-egress/kin-slot-gate` 哈希。
-6. 验收 health、vm-01/vm-02 与 VPS10 测试槽状态、迁移至 047、verify-fixes 默认用例、公网 401/200、真实小请求和 15 分钟观察。
+3. 备份 `/opt/vm2api-primary/{data,vms,src/config}`、runtime env 与 Nginx release；创建面板一致性备份，确认 SHA256 与 `quick_check`。
+4. 在独立 Docker buildx 中从纯净 `git archive <commit>` 构建下一版 `fp<N>` 镜像；必须带 `--network host`。不得改动既有 nerdctl 系统 containerd，确认成功前不得重启 Docker。
+5. 更新 `vm2api-primary.service` 镜像 tag 后重启主控容器，先验收 health、启动日志与槽位 `restart=no` 语义；随后确认/触发 `wrap-cli/sync restart:true` 与 fleet payload 刷新，核对关键 payload 哈希。
+6. 验收 health、四个槽位状态、schema 版本、verify-fixes 默认用例、公网 401/200、真实小请求和 15 分钟观察。
 7. 升级成功并完成文档留档后，用 `git worktree remove` 清理历史 baseline，只保留本次最新版本；最后 `git worktree prune` 并复核 `git worktree list`。
 
-## 2026-10-29 v1.4.025 准备与并行部署结论
+## 2026-10-29 v1.4.025 准备与生产迁移结论
 
 1. 已创建 `fork-patches-v1.4.025-prep` 并完成 rebase；有效源码补丁收敛为 3/4/9，补丁 11 源码随上游 #797 下线，仅保留测试。用户已按 lease 强推 `origin/fork-patches=8c194533`。
-2. 本机候选镜像 `vm2api:v1.4.025-fp1-prep` = `sha256:a0616374…e27b90`；VPS10 并行主控镜像 `vm2api:v1.4.025-fp1` = `sha256:17a3ca32…c812b0`。VPS10 使用空库，迁移至 047，未复制生产账号/凭证，DNS 仍指向 VPS9。
+2. 本机候选镜像 `vm2api:v1.4.025-fp1-prep` = `sha256:a0616374…e27b90`；VPS10 生产镜像 `vm2api:v1.4.025-fp1` = `sha256:17a3ca32…c812b0`。
+3. 生产 DB/槽位凭证已从 VPS9 迁移到 VPS10，schema 至 047；四槽真实请求与出口验证 PASS。VPS9 反向为单槽节点，旧主控停止保留回滚，DNS 指向 VPS10。
 
 ## 2026-10-27 部署结论
 
