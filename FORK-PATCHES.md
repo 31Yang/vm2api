@@ -6,14 +6,14 @@
 
 | 项 | 值 |
 |---|---|
-| 上游 | `v1.4.028`（2026-10-30，`77b72613`）已 rebase；生产仍为 `v1.4.025` |
-| 线上基线 | VPS10 生产 `v1.4.025-fp1`（2026-10-29 起；运行镜像源码 `8c194533`；补丁 3/4/9；迁移至 047）。VPS9 旧 `v1.4.011-fp2` 停止保留回滚 |
-| 分支 | `fork-patches` 已推进到 v1.4.028 准备态；生产运行镜像仍固定在源码 `8c194533`，后续文档提交不改变已运行镜像 |
+| 上游 | `v1.4.028`（2026-10-30，`77b72613`）已部署 |
+| 线上基线 | VPS10 生产 `v1.4.028-fp1`（2026-10-30 10:30 SGT 起；运行镜像源码 `2e848ed4`；补丁 3/4/9；schema 047）。VPS9 旧 `v1.4.011-fp2` 停止保留回滚 |
+| 分支 | 运行镜像固定在源码 `2e848ed4`，后续文档提交不改变已运行镜像 |
 | 保护点 | 旧保护 `pre-rebase-13209-fp3`、`pre-rebase-13218-fc6a626b`、`pre-rebase-14010-96704234`、`pre-rebase-14025-8ef18c79`；升级闭环前临时保留 `../vm2api-v1.4.025-baseline` 与 `../vm2api-v1.4.028-baseline` |
 | baseline 纪律 | 上游纯净对照 worktree 只用于测试归因。升级成功、验收与文档留档完成后，删除全部历史 `vm2api-v*-baseline`，只保留本次最新版本一个；失败未闭环前可临时保留新旧两个 |
-| 镜像 | VPS10 运行 `vm2api:v1.4.025-fp1` = `sha256:17a3ca329d251b43714917a490eb58fde6b2ad67f8775b69364581e310c812b0`；上一版本机候选 `vm2api:v1.4.025-fp1-prep` = `sha256:a0616374b436a790d0ba9781cf4dac91c4082bd7f9869cda5f962f4bb4e27b90`。2026-10-30 本机候选 `vm2api:v1.4.028-fp1-prep` = `sha256:9cf67fb91aab1e7a2e157b949ebe07af22d0c82d845d41bda2aa8b24cf3150cd`；VPS10 候选同名 tag = `sha256:246a54f3bb3a361e96c3aa2142259eade397ca88dfe8064299cb682778822bcc`（649,596,308 bytes） |
-| 备份/回滚 | 生产迁移前 VPS9 备份 `bak_271bcbbc0f1d`（23,228,530 bytes，SHA256 `fb9fa123…90ad4`）；VPS10 空库快照 `/opt/vm2api-primary/data.empty-pre-restore.20261029T050345Z`。DB 已到 047，回滚必须先备份 VPS10 当前库，再恢复到升级后的 VPS9，不能只切旧镜像 |
-| 已知上游缺陷 | #817 官方 first-use hello / usage 缺首方身份句的问题已由上游 `v1.4.028` 修复；不再 cherry-pick #816。部署后 vm-03/vm-04 各只允许重跑一次 force 初装 |
+| 镜像 | VPS10 运行 `vm2api:v1.4.028-fp1` = `sha256:246a54f3bb3a361e96c3aa2142259eade397ca88dfe8064299cb682778822bcc`（649,596,308 bytes）。本机验证候选 `sha256:9cf67fb9…150cd`；旧生产镜像保留 `vm2api:v1.4.025-fp1-pre-14028` = `sha256:17a3ca32…c812b0` |
+| 备份/回滚 | 切换前最新备份 `bak_76c4c7ed2b10`（26,303,215 bytes，SHA256 `a81ffd52…6bb9`，db 147,116,032 bytes），`quick_check=ok`；保护目录 `/opt/vm2api-primary/pre-14028fp1-switch-20261030T023012Z`。本版无 DB migration；快速回滚可切回旧镜像，但若已接受新写入，精确回滚必须停写并恢复该备份，且需把本机三槽与 VPS9 vm-01 payload 同步回 025 版本 |
+| 已知上游缺陷 | #817 官方 first-use hello / usage 缺首方身份句的问题已由上游 `v1.4.028` 修复；用户手动完成 vm-03/vm-04 初装并验收 OK，不得重复执行 |
 
 ## v1.4.011→v1.4.025 变化
 
@@ -57,7 +57,7 @@
 ### 上游已解决：官方初装 hello 429
 
 - v1.4.023/v1.4.025 的 first-use 直连路径缺 `CRS_OFFICIAL_CLI_SYSTEM`，导致 hello 与 `/usage` 被上游 429 `rate_limit_error "Error"` 拒绝；v1.4.028 已在官方 bootstrap 命令补回。
-- 部署成功并完成 payload 刷新后，仅对受影响的 vm-03/vm-04 各重跑一次 force 初装；通过标准为 `hello_ok=true`、`usage_ok=true`、`status=ok`，失败不得重复尝试。
+- 2026-10-30 用户手动完成 vm-03/vm-04 force 初装；只读复核 `hello_ok=true`、`usage_ok=true`、`status=ok`，后续不得重复执行。
 
 ## Retired patches
 
@@ -88,7 +88,7 @@
 5. 更新 `vm2api-primary.service` 镜像 tag 后重启主控容器，先验收 health、启动日志与槽位 `restart=no` 语义；随后确认/触发 `wrap-cli/sync restart:true` 与 fleet payload 刷新，核对关键 payload 哈希。
 6. 验收 health、四个槽位状态、schema 版本、公网 401/200、真实小请求和 15 分钟观察；`verify-fixes` 适配 VPS10 前不作为硬门槛，适配后恢复默认用例验收。
 7. 升级成功并完成文档留档后，用 `git worktree remove` 清理历史 baseline，只保留本次最新版本；最后 `git worktree prune` 并复核 `git worktree list`。
-8. 升级前确认 telemetry 全关、四个槽绑定出口不变；部署后 wrap/fleet 刷新成功，才允许按上游 #817 修复各重跑一次官方 force 初装。
+8. 升级前确认 telemetry 全关、四个槽绑定出口不变；部署后 wrap/fleet 刷新成功。#817 已闭环，除非更换账号或凭证，不再执行官方 force 初装。
 
 ## 2026-10-29 v1.4.025 准备与生产迁移结论
 
@@ -103,6 +103,13 @@
 3. VPS10 只读预检通过：`vm2api-containerd` / `vm2api-docker` / `vm2api-primary` active，health 200，根分区可用 72G，独立 Docker 29.1.3 + buildx 0.38.1。已从纯净 `git archive` 构建 `vm2api:v1.4.028-fp1-prep` = `sha256:246a54f3…22bcc`，并随最终 prep HEAD 缓存重建同 ID；15 个 payload 文件与 manifest 匹配，生产容器仍为 `v1.4.025-fp1`。
 4. 部署前保护现场已完成：面板一致性备份 `bak_2e6e382e2a15`（26,335,085 bytes，SHA256 `b9dcfed4fa36692cf8b5202b4e81d543bcee018015c06b3f8844e7724edc28e1`，db 147,329,024 bytes，includes db/5 vms/5 config）；`PRAGMA quick_check=ok`。保护目录 `/opt/vm2api-primary/pre-14028fp1-20261030T015247Z` 内 `data-vms-config.tar.gz` SHA256 `69e51c79…b8fc`，另含 runtime env、主控/Nginx systemd unit 与 Nginx conf；旧镜像另打 `vm2api:v1.4.025-fp1-pre-14028`。
 5. 预检发现 vm-01/vm-02 旧 seed policy 显式开启 telemetry，vm-03/vm-04 有历史 sidecar 进程残留。已通过面板把四槽 seed/worker 配置全关并停止旧 sidecar；vm-01 远端确认虽耗时较长，但最终 HTTP 200 / `action=stopped`，远端 worker 配置与进程均复核关闭。四个 VM 的 proxy/node/container 与保护包逐项一致。
+
+## 2026-10-30 v1.4.028-fp1 部署结论
+
+1. 用户明确要求立即部署。10:30:12 SGT 创建切换前备份 `bak_76c4c7ed2b10` 并 hold 四槽，`inflight=0`；10:30:47 SGT 仅更新 `vm2api-primary.service` 镜像 tag 并重启主控容器，未重启 Docker/containerd。health 约 4 秒恢复 200，schema 仍 047，`quick_check=ok`。
+2. 手动 `wrap-cli/sync restart:true` 返回 4/4 OK：本机 vm-02/vm-03/vm-04 wrapper 与 kernel 校验通过；VPS9 vm-01 使用 baked 镜像 `/opt/kin/`，实际 `kin-kernel.bin=f57d4e71…4288`、`cli-node=8484c4c5…611b`，`.kin/` 旧缓存不参与运行。四槽 kernel health 均 200 / healthy / ready_slots=20 / cli_restarts=0，telemetry enabled=false。验收后恢复调度 `restored=4`。
+3. 公网验收：无 key `/v1/models=401`，带 key 200 且 24 个模型。四槽各一条 haiku 最小真实请求均 200 / `OK`，output 4 tokens；vm-03/vm-04 官方初装由用户手动完成，代理仅读取状态确认 `hello_ok=true`、`usage_ok=true`、`status=ok`，未重复执行。
+4. 10:30:47–10:46:00 SGT 观察 15 分钟：35 条 200、2 条 503 `account_pool_exhausted`（10:37:55/10:38:23 SGT，发生在恢复调度后的短暂资格刷新窗口，随后同模型连续 200）；无 fatal/panic/OOM/kernel restart/refresh_failed。`/opt/vm2api-primary/src` 已用 `git reset --keep` 同步到 `2e848ed4`，routing/distill SHA 前后不变。
 
 ## 2026-10-27 部署结论
 
