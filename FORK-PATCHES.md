@@ -9,11 +9,11 @@
 | 上游 | `v1.4.028`（2026-10-30，`77b72613`）已部署 |
 | 线上基线 | VPS10 生产 `v1.4.028-fp1`（2026-10-30 10:30 SGT 起；运行镜像源码 `2e848ed4`；补丁 3/4/9；schema 047）。VPS9 旧 `v1.4.011-fp2` 停止保留回滚 |
 | 分支 | 运行镜像固定在源码 `2e848ed4`，后续文档提交不改变已运行镜像 |
-| 保护点 | 旧保护 `pre-rebase-13209-fp3`、`pre-rebase-13218-fc6a626b`、`pre-rebase-14010-96704234`、`pre-rebase-14025-8ef18c79`；升级闭环前临时保留 `../vm2api-v1.4.025-baseline` 与 `../vm2api-v1.4.028-baseline` |
-| baseline 纪律 | 上游纯净对照 worktree 只用于测试归因。升级成功、验收与文档留档完成后，删除全部历史 `vm2api-v*-baseline`，只保留本次最新版本一个；失败未闭环前可临时保留新旧两个 |
+| 保护点 | 历史保护 `pre-rebase-13209-fp3`、`pre-rebase-13218-fc6a626b`、`pre-rebase-14010-96704234`、`pre-rebase-14025-8ef18c79`、`pre-rebase-14028-9f36f08b`；当前仅保留 `../vm2api-v1.4.028-baseline` |
+| baseline 纪律 | 上游纯净对照 worktree 只用于测试归因；升级闭环后只保留最新版本一个，历史 baseline 已清理 |
 | 镜像 | VPS10 运行 `vm2api:v1.4.028-fp1` = `sha256:246a54f3bb3a361e96c3aa2142259eade397ca88dfe8064299cb682778822bcc`（649,596,308 bytes）。本机验证候选 `sha256:9cf67fb9…150cd`；旧生产镜像保留 `vm2api:v1.4.025-fp1-pre-14028` = `sha256:17a3ca32…c812b0` |
 | 备份/回滚 | 切换前最新备份 `bak_76c4c7ed2b10`（26,303,215 bytes，SHA256 `a81ffd52…6bb9`，db 147,116,032 bytes），`quick_check=ok`；保护目录 `/opt/vm2api-primary/pre-14028fp1-switch-20261030T023012Z`。本版无 DB migration；快速回滚可切回旧镜像，但若已接受新写入，精确回滚必须停写并恢复该备份，且需把本机三槽与 VPS9 vm-01 payload 同步回 025 版本 |
-| 已知上游缺陷 | #817 官方 first-use hello / usage 缺首方身份句的问题已由上游 `v1.4.028` 修复；用户手动完成 vm-03/vm-04 初装并验收 OK，不得重复执行 |
+| 已解决上游问题 | #817 官方 first-use hello / usage 缺首方身份句的问题已由上游 `v1.4.028` 修复；用户手动完成 vm-03/vm-04 初装并验收 OK，不得重复执行 |
 
 ## v1.4.011→v1.4.025 变化
 
@@ -70,7 +70,7 @@
 | 8 lift total_tokens 钉值 | v1.3.209 | 上游稳定官方 system/messages 前缀与 lift 模型，覆盖原目标 |
 | 11 official_full user 断点 | v1.4.025 | 上游 #797 的 shapedFallback 在缺少 messages marker 时按预算/TTL 补点；保留 fork 测试作回归 |
 
-## 当前验证结论（v1.4.028 准备态，2026-10-30）
+## 当前验证结论（v1.4.028 生产态，2026-10-30）
 
 - rebase：61 个 fork 提交无冲突落到 `v1.4.028`；相对上游的源码差异仍只落在补丁 3/4/9 及对应测试、台账。#817 已由上游覆盖，不 cherry-pick #816。
 - Linux Node 对照：在 `node:22-bookworm-slim` 中按 312 个 unit 文件逐文件执行、单文件 20s 超时，fork 与纯净 v1.4.028 均为 294 pass / 10 fail / 8 timeout，逐文件状态日志 SHA256 同为 `06cc5c8e…4ae83`。失败/超时集中在 openssl、IPv6、Docker/cgroup、SQLite/挂载与 `sticky-router` / `wrap-cli-runtime` 环境依赖，双侧一致，不构成 fork 回归。
@@ -96,11 +96,11 @@
 2. 本机候选镜像 `vm2api:v1.4.025-fp1-prep` = `sha256:a0616374…e27b90`；VPS10 生产镜像 `vm2api:v1.4.025-fp1` = `sha256:17a3ca32…c812b0`。
 3. 生产 DB/槽位凭证已从 VPS9 迁移到 VPS10，schema 至 047；四槽真实请求与出口验证 PASS。VPS9 反向为单槽节点，旧主控停止保留回滚，DNS 指向 VPS10。
 
-## 2026-10-30 v1.4.028 准备结论
+## 2026-10-30 v1.4.028 准备结论（历史阶段）
 
 1. 目标版本裁决为 release tag `v1.4.028`（`77b72613`），不追 post-tag `upstream/main` 的未发版 #815 修复。
-2. 用户授权后，代理已推送保护 tag `pre-rebase-14028-9f36f08b`，并按 lease 将 `fork-patches` 从 `9f36f08b` 强推到 v1.4.028 准备态；后续台账提交均为 docs-only。生产切换仍需等待低峰窗口和独立确认。
-3. VPS10 只读预检通过：`vm2api-containerd` / `vm2api-docker` / `vm2api-primary` active，health 200，根分区可用 72G，独立 Docker 29.1.3 + buildx 0.38.1。已从纯净 `git archive` 构建 `vm2api:v1.4.028-fp1-prep` = `sha256:246a54f3…22bcc`，并随最终 prep HEAD 缓存重建同 ID；15 个 payload 文件与 manifest 匹配，生产容器仍为 `v1.4.025-fp1`。
+2. 用户授权后，代理已推送保护 tag `pre-rebase-14028-9f36f08b`，并按 lease 将 `fork-patches` 从 `9f36f08b` 强推到 v1.4.028 准备态；后续台账提交均为 docs-only。当时生产切换仍需等待低峰窗口和独立确认。
+3. VPS10 只读预检通过：`vm2api-containerd` / `vm2api-docker` / `vm2api-primary` active，health 200，根分区可用 72G，独立 Docker 29.1.3 + buildx 0.38.1。已从纯净 `git archive` 构建 `vm2api:v1.4.028-fp1-prep` = `sha256:246a54f3…22bcc`，并随最终 prep HEAD 缓存重建同 ID；15 个 payload 文件与 manifest 匹配，当时生产容器仍为 `v1.4.025-fp1`。
 4. 部署前保护现场已完成：面板一致性备份 `bak_2e6e382e2a15`（26,335,085 bytes，SHA256 `b9dcfed4fa36692cf8b5202b4e81d543bcee018015c06b3f8844e7724edc28e1`，db 147,329,024 bytes，includes db/5 vms/5 config）；`PRAGMA quick_check=ok`。保护目录 `/opt/vm2api-primary/pre-14028fp1-20261030T015247Z` 内 `data-vms-config.tar.gz` SHA256 `69e51c79…b8fc`，另含 runtime env、主控/Nginx systemd unit 与 Nginx conf；旧镜像另打 `vm2api:v1.4.025-fp1-pre-14028`。
 5. 预检发现 vm-01/vm-02 旧 seed policy 显式开启 telemetry，vm-03/vm-04 有历史 sidecar 进程残留。已通过面板把四槽 seed/worker 配置全关并停止旧 sidecar；vm-01 远端确认虽耗时较长，但最终 HTTP 200 / `action=stopped`，远端 worker 配置与进程均复核关闭。四个 VM 的 proxy/node/container 与保护包逐项一致。
 
