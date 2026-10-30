@@ -11,7 +11,7 @@
 | 分支 | 本地 `fork-patches-v1.4.028-prep` 已基于 `v1.4.028` 完成 rebase；`origin/fork-patches=9f36f08b` 仍为生产留档分支。运行镜像固定在源码 `8c194533`，后续文档提交不改变已运行镜像 |
 | 保护点 | 旧保护 `pre-rebase-13209-fp3`、`pre-rebase-13218-fc6a626b`、`pre-rebase-14010-96704234`、`pre-rebase-14025-8ef18c79`；升级闭环前临时保留 `../vm2api-v1.4.025-baseline` 与 `../vm2api-v1.4.028-baseline` |
 | baseline 纪律 | 上游纯净对照 worktree 只用于测试归因。升级成功、验收与文档留档完成后，删除全部历史 `vm2api-v*-baseline`，只保留本次最新版本一个；失败未闭环前可临时保留新旧两个 |
-| 镜像 | VPS10 运行 `vm2api:v1.4.025-fp1` = `sha256:17a3ca329d251b43714917a490eb58fde6b2ad67f8775b69364581e310c812b0`；上一版本机候选 `vm2api:v1.4.025-fp1-prep` = `sha256:a0616374b436a790d0ba9781cf4dac91c4082bd7f9869cda5f962f4bb4e27b90`。2026-10-30 本机候选 `vm2api:v1.4.028-fp1-prep` = `sha256:9cf67fb91aab1e7a2e157b949ebe07af22d0c82d845d41bda2aa8b24cf3150cd`（649,464,859 bytes） |
+| 镜像 | VPS10 运行 `vm2api:v1.4.025-fp1` = `sha256:17a3ca329d251b43714917a490eb58fde6b2ad67f8775b69364581e310c812b0`；上一版本机候选 `vm2api:v1.4.025-fp1-prep` = `sha256:a0616374b436a790d0ba9781cf4dac91c4082bd7f9869cda5f962f4bb4e27b90`。2026-10-30 本机候选 `vm2api:v1.4.028-fp1-prep` = `sha256:9cf67fb91aab1e7a2e157b949ebe07af22d0c82d845d41bda2aa8b24cf3150cd`；VPS10 候选同名 tag = `sha256:246a54f3bb3a361e96c3aa2142259eade397ca88dfe8064299cb682778822bcc`（649,596,308 bytes） |
 | 备份/回滚 | 生产迁移前 VPS9 备份 `bak_271bcbbc0f1d`（23,228,530 bytes，SHA256 `fb9fa123…90ad4`）；VPS10 空库快照 `/opt/vm2api-primary/data.empty-pre-restore.20261029T050345Z`。DB 已到 047，回滚必须先备份 VPS10 当前库，再恢复到升级后的 VPS9，不能只切旧镜像 |
 | 已知上游缺陷 | #817 官方 first-use hello / usage 缺首方身份句的问题已由上游 `v1.4.028` 修复；不再 cherry-pick #816。部署后 vm-03/vm-04 各只允许重跑一次 force 初装 |
 
@@ -99,8 +99,9 @@
 ## 2026-10-30 v1.4.028 准备结论
 
 1. 目标版本裁决为 release tag `v1.4.028`（`77b72613`），不追 post-tag `upstream/main` 的未发版 #815 修复。
-2. 本地 prep 分支完成 rebase、全量对照验证与本机候选镜像构建；用户已授权本次由代理执行 `--force-with-lease` 推送。生产切换仍需等待低峰窗口和独立确认。
-3. VPS10 只读预检通过：`vm2api-containerd` / `vm2api-docker` / `vm2api-primary` active，health 200，根分区可用 72G，独立 Docker 29.1.3 + buildx 0.38.1，生产镜像仍是 `v1.4.025-fp1`。
+2. 用户授权后，代理已推送保护 tag `pre-rebase-14028-9f36f08b`，并按 lease 将 `origin/fork-patches` 从 `9f36f08b` 强推到 `f5c9d57a`。生产切换仍需等待低峰窗口和独立确认。
+3. VPS10 只读预检通过：`vm2api-containerd` / `vm2api-docker` / `vm2api-primary` active，health 200，根分区可用 72G，独立 Docker 29.1.3 + buildx 0.38.1。已从 `origin/fork-patches=f5c9d57a` 的纯净 `git archive` 构建 `vm2api:v1.4.028-fp1-prep` = `sha256:246a54f3…22bcc`，15 个 payload 文件与 manifest 匹配；生产容器仍为 `v1.4.025-fp1`。
+4. 部署前保护现场已完成：面板一致性备份 `bak_2e6e382e2a15`（26,335,085 bytes，SHA256 `b9dcfed4fa36692cf8b5202b4e81d543bcee018015c06b3f8844e7724edc28e1`，db 147,329,024 bytes，includes db/5 vms/5 config）；`PRAGMA quick_check=ok`。保护目录 `/opt/vm2api-primary/pre-14028fp1-20261030T015247Z` 内 `data-vms-config.tar.gz` SHA256 `69e51c79…b8fc`，另含 runtime env、主控/Nginx systemd unit 与 Nginx conf；旧镜像另打 `vm2api:v1.4.025-fp1-pre-14028`。
 
 ## 2026-10-27 部署结论
 
