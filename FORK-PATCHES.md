@@ -6,13 +6,14 @@
 
 | 项 | 值 |
 |---|---|
-| 上游 | `v1.4.025`（2026-10-28，`75a18df2`）已部署 |
+| 上游 | `v1.4.028`（2026-10-30，`77b72613`）已 rebase；生产仍为 `v1.4.025` |
 | 线上基线 | VPS10 生产 `v1.4.025-fp1`（2026-10-29 起；运行镜像源码 `8c194533`；补丁 3/4/9；迁移至 047）。VPS9 旧 `v1.4.011-fp2` 停止保留回滚 |
-| 分支 | `origin/fork-patches` 已包含生产迁移留档；运行镜像固定在源码 `8c194533`，后续文档提交不改变已运行镜像 |
-| 保护点 | 旧保护 `pre-rebase-13209-fp3`、`pre-rebase-13218-fc6a626b`、`pre-rebase-14010-96704234`、`pre-rebase-14025-8ef18c79`；当前仅保留 `../vm2api-v1.4.025-baseline` 一个纯净 worktree |
+| 分支 | 本地 `fork-patches-v1.4.028-prep` 已基于 `v1.4.028` 完成 rebase；`origin/fork-patches=9f36f08b` 仍为生产留档分支。运行镜像固定在源码 `8c194533`，后续文档提交不改变已运行镜像 |
+| 保护点 | 旧保护 `pre-rebase-13209-fp3`、`pre-rebase-13218-fc6a626b`、`pre-rebase-14010-96704234`、`pre-rebase-14025-8ef18c79`；升级闭环前临时保留 `../vm2api-v1.4.025-baseline` 与 `../vm2api-v1.4.028-baseline` |
 | baseline 纪律 | 上游纯净对照 worktree 只用于测试归因。升级成功、验收与文档留档完成后，删除全部历史 `vm2api-v*-baseline`，只保留本次最新版本一个；失败未闭环前可临时保留新旧两个 |
-| 镜像 | VPS10 运行 `vm2api:v1.4.025-fp1` = `sha256:17a3ca329d251b43714917a490eb58fde6b2ad67f8775b69364581e310c812b0`；本机候选 `vm2api:v1.4.025-fp1-prep` = `sha256:a0616374b436a790d0ba9781cf4dac91c4082bd7f9869cda5f962f4bb4e27b90` |
+| 镜像 | VPS10 运行 `vm2api:v1.4.025-fp1` = `sha256:17a3ca329d251b43714917a490eb58fde6b2ad67f8775b69364581e310c812b0`；上一版本机候选 `vm2api:v1.4.025-fp1-prep` = `sha256:a0616374b436a790d0ba9781cf4dac91c4082bd7f9869cda5f962f4bb4e27b90`。2026-10-30 本机候选 `vm2api:v1.4.028-fp1-prep` = `sha256:9cf67fb91aab1e7a2e157b949ebe07af22d0c82d845d41bda2aa8b24cf3150cd`（649,464,859 bytes） |
 | 备份/回滚 | 生产迁移前 VPS9 备份 `bak_271bcbbc0f1d`（23,228,530 bytes，SHA256 `fb9fa123…90ad4`）；VPS10 空库快照 `/opt/vm2api-primary/data.empty-pre-restore.20261029T050345Z`。DB 已到 047，回滚必须先备份 VPS10 当前库，再恢复到升级后的 VPS9，不能只切旧镜像 |
+| 已知上游缺陷 | #817 官方 first-use hello / usage 缺首方身份句的问题已由上游 `v1.4.028` 修复；不再 cherry-pick #816。部署后 vm-03/vm-04 各只允许重跑一次 force 初装 |
 
 ## v1.4.011→v1.4.025 变化
 
@@ -21,6 +22,14 @@
 3. 协议与缓存：#797 系列 refines caller system/cache policy、agent summary 会话隔离、zero/official 模板补点；上游已原生覆盖 fork 补丁 11 的 shaped official_full user 断点修复。#812 新增 VM/node offline 通知。
 4. 调度与可靠性：#795 复用调度快照并区分真实排队耗时，#804 修复准入完成后实时并发计数，#805 修复省略 `stream` 时按 Accept 返回 JSON，另有 Codex 计费/非流式/超时修复。ARM64 原生 CLI 变化不影响 VPS9 amd64 本机槽与 VPS10 远端 amd64 槽。
 5. v1.4.005 起的部署顺序仍强制：构建/切换新控制面 → health 与 `restart=no` 迁移成功 → wrap/fleet payload 刷新 → 验收。不要先重启 Docker；不要覆盖 `routing.json`、`vms/`、`data/`、`.env`。
+
+## v1.4.025→v1.4.028 变化
+
+1. 无新增 DB migration，schema 继续停在 047；Node 依赖与 lockfile 不变。#817 在 hello 与 `/usage` 直连命令补官方 CLI 身份句，上游已覆盖 #816 的修复方向。
+2. payload release 切到 `payload-2026.10.29-telemetry-kernel`：`kin-kernel` / `kin-kernel.bin` 为 `f57d4e71…4288`（13,228,472 bytes），`cli-node` 为 `8484c4c5…611b`（27,933,052 bytes）；`kin-worker`、`kin-egress`、`kin-slot-gate`、`kin-oauth-auth`、`kin-computer`、`cc-node` 哈希不变。切换后必须执行 wrap sync `restart:true` 并刷新本机与 VPS9 节点 fleet payload。
+3. Linux VM telemetry 从 Go sidecar 迁入 native kernel / cli-node，删除自愈与回退；新槽默认关闭，只有 `seed_policy.telemetry_disabled === false` 显式开启。升级前确认四个槽与 `official_cc.sync_telemetry` 均保持关闭，且不得改变绑定出口。
+4. JEV 内置决策题从六题收敛为三题，保存的未修改内置题会自动升级，面板自定义题保留；#820/#825 同时收窄维修/源码类误伤。该行为变化需在部署验收中覆盖补丁 9 防御语境样本。
+5. 协议与调度修复：#818 过期 cache-prefix 快照即删，#814 保留 eager tool streaming，#819 保留数组 system，#807 不再读取无人写入的 `accounts.schedulable`，#672 面板显示订阅到期，#665 GPT 等待队列按账号定向唤醒。`upstream/main` 在 tag 后又合并 #815，但尚未 release，本次不追 main。
 
 ## Active patches
 
@@ -45,6 +54,11 @@
 - 拟改文件：`worker/internal/oauthcmd/oauthcmd.go`（保留 `RefreshError.Code`）、`src/lib/transport/kernel-router.mjs` 或凭证调度分类（将 HTTP 400 + `refresh_failed` 视为 fatal）、对应 Go/Node 单测。
 - 验收：`invalid_grant` / `invalid_refresh_token` / 空 code + HTTP 400 均自动 paused；429、5xx、网络超时仍 retryable；重新导入凭证后清除 `refresh_error` 并恢复调度。
 
+### 上游已解决：官方初装 hello 429
+
+- v1.4.023/v1.4.025 的 first-use 直连路径缺 `CRS_OFFICIAL_CLI_SYSTEM`，导致 hello 与 `/usage` 被上游 429 `rate_limit_error "Error"` 拒绝；v1.4.028 已在官方 bootstrap 命令补回。
+- 部署成功并完成 payload 刷新后，仅对受影响的 vm-03/vm-04 各重跑一次 force 初装；通过标准为 `hello_ok=true`、`usage_ok=true`、`status=ok`，失败不得重复尝试。
+
 ## Retired patches
 
 | 补丁 | 下线版本 | 结论 |
@@ -56,12 +70,14 @@
 | 8 lift total_tokens 钉值 | v1.3.209 | 上游稳定官方 system/messages 前缀与 lift 模型，覆盖原目标 |
 | 11 official_full user 断点 | v1.4.025 | 上游 #797 的 shapedFallback 在缺少 messages marker 时按预算/TTL 补点；保留 fork 测试作回归 |
 
-## 当前验证结论（v1.4.025 生产态）
+## 当前验证结论（v1.4.028 准备态，2026-10-30）
 
-- Windows 官方隔离单测：fork 与纯净 v1.4.025 均为 46/313 个失败文件，且逐文件失败集合一致；抽样为 Unix socket `EACCES`、SQLite `EBUSY`、`/opt` 路径解析等平台依赖。
-- Linux 镜像内全量受容器缺少宿主 Docker/cgroup/特权执行环境影响，双侧输出一致；`wrap-cli-runtime` 双侧同样在镜像内挂起，已按已知环境缺口记录。fork 3/4/9/11 回归测试在 Linux 候选镜像内全部通过。
-- Go race、gofmt、Biome、Web Vitest、Web build、Docker build 通过。Web 本机验证需使用 Dockerfile 同源的 pnpm 10；pnpm 12.6 会忽略 package.json 的 `pnpm.overrides` 并破坏本地链接。
-- 候选镜像 `VERSION=1.4.025`；7 个关键 payload 哈希均与 `payload-2026.10.28-kernel-agent-id` manifest 一致。`npm audit --omit=dev` 仍有上游 `socks -> ip-address` moderate，未额外改依赖。
+- rebase：61 个 fork 提交无冲突落到 `v1.4.028`；相对上游的源码差异仍只落在补丁 3/4/9 及对应测试、台账。#817 已由上游覆盖，不 cherry-pick #816。
+- Linux Node 对照：在 `node:22-bookworm-slim` 中按 312 个 unit 文件逐文件执行、单文件 20s 超时，fork 与纯净 v1.4.028 均为 294 pass / 10 fail / 8 timeout，逐文件状态日志 SHA256 同为 `06cc5c8e…4ae83`。失败/超时集中在 openssl、IPv6、Docker/cgroup、SQLite/挂载与 `sticky-router` / `wrap-cli-runtime` 环境依赖，双侧一致，不构成 fork 回归。
+- Go：worker `go vet ./...`、`go test ./...`、`go test -race ./...` 全部通过；api-kernel `go vet ./...` 与 `go test ./...` 通过。gofmt 无差异。
+- Web：pnpm 10 下 Vitest 69 files / 529 tests、build、typecheck、Prettier 全部通过。Lint 在 fork 与纯净 028 均为 8 errors / 39 warnings 且逐项一致；上游 CI 不执行 lint，记录为上游既有非阻断项。
+- Docker：`git archive` + buildx `--network host --load` 构建通过，候选 `vm2api:v1.4.028-fp1-prep` = `sha256:9cf67fb9…150cd`，`VERSION=1.4.028`。镜像内 `kin-kernel` / `kin-kernel.bin` = `f57d4e71…4288`，`cli-node` = `8484c4c5…611b`，其余关键 payload 哈希与 manifest 一致；补丁 3/4/9 专项测试在镜像本体中全部通过。
+- `npm audit --omit=dev` 仍有上游 `socks -> ip-address` moderate；依赖与 025 相同，未额外改 lockfile。
 
 ## 下次升级标准门槛（VPS10 生产）
 
@@ -70,14 +86,21 @@
 3. 备份 `/opt/vm2api-primary/{data,vms,src/config}`、runtime env 与 Nginx release；创建面板一致性备份，确认 SHA256 与 `quick_check`。
 4. 在独立 Docker buildx 中从纯净 `git archive <commit>` 构建下一版 `fp<N>` 镜像；必须带 `--network host`。不得改动既有 nerdctl 系统 containerd，确认成功前不得重启 Docker。
 5. 更新 `vm2api-primary.service` 镜像 tag 后重启主控容器，先验收 health、启动日志与槽位 `restart=no` 语义；随后确认/触发 `wrap-cli/sync restart:true` 与 fleet payload 刷新，核对关键 payload 哈希。
-6. 验收 health、四个槽位状态、schema 版本、verify-fixes 默认用例、公网 401/200、真实小请求和 15 分钟观察。
+6. 验收 health、四个槽位状态、schema 版本、公网 401/200、真实小请求和 15 分钟观察；`verify-fixes` 适配 VPS10 前不作为硬门槛，适配后恢复默认用例验收。
 7. 升级成功并完成文档留档后，用 `git worktree remove` 清理历史 baseline，只保留本次最新版本；最后 `git worktree prune` 并复核 `git worktree list`。
+8. 升级前确认 telemetry 全关、四个槽绑定出口不变；部署后 wrap/fleet 刷新成功，才允许按上游 #817 修复各重跑一次官方 force 初装。
 
 ## 2026-10-29 v1.4.025 准备与生产迁移结论
 
 1. 已创建 `fork-patches-v1.4.025-prep` 并完成 rebase；有效源码补丁收敛为 3/4/9，补丁 11 源码随上游 #797 下线，仅保留测试。用户已按 lease 强推 `origin/fork-patches=8c194533`。
 2. 本机候选镜像 `vm2api:v1.4.025-fp1-prep` = `sha256:a0616374…e27b90`；VPS10 生产镜像 `vm2api:v1.4.025-fp1` = `sha256:17a3ca32…c812b0`。
 3. 生产 DB/槽位凭证已从 VPS9 迁移到 VPS10，schema 至 047；四槽真实请求与出口验证 PASS。VPS9 反向为单槽节点，旧主控停止保留回滚，DNS 指向 VPS10。
+
+## 2026-10-30 v1.4.028 准备结论
+
+1. 目标版本裁决为 release tag `v1.4.028`（`77b72613`），不追 post-tag `upstream/main` 的未发版 #815 修复。
+2. 本地 prep 分支完成 rebase、全量对照验证与本机候选镜像构建；用户已授权本次由代理执行 `--force-with-lease` 推送。生产切换仍需等待低峰窗口和独立确认。
+3. VPS10 只读预检通过：`vm2api-containerd` / `vm2api-docker` / `vm2api-primary` active，health 200，根分区可用 72G，独立 Docker 29.1.3 + buildx 0.38.1，生产镜像仍是 `v1.4.025-fp1`。
 
 ## 2026-10-27 部署结论
 
