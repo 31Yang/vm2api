@@ -102,7 +102,7 @@
 2. 用户授权后，代理已推送保护 tag `pre-rebase-14028-9f36f08b`，并按 lease 将 `fork-patches` 从 `9f36f08b` 强推到 v1.4.028 准备态；后续台账提交均为 docs-only。生产切换仍需等待低峰窗口和独立确认。
 3. VPS10 只读预检通过：`vm2api-containerd` / `vm2api-docker` / `vm2api-primary` active，health 200，根分区可用 72G，独立 Docker 29.1.3 + buildx 0.38.1。已从纯净 `git archive` 构建 `vm2api:v1.4.028-fp1-prep` = `sha256:246a54f3…22bcc`，并随最终 prep HEAD 缓存重建同 ID；15 个 payload 文件与 manifest 匹配，生产容器仍为 `v1.4.025-fp1`。
 4. 部署前保护现场已完成：面板一致性备份 `bak_2e6e382e2a15`（26,335,085 bytes，SHA256 `b9dcfed4fa36692cf8b5202b4e81d543bcee018015c06b3f8844e7724edc28e1`，db 147,329,024 bytes，includes db/5 vms/5 config）；`PRAGMA quick_check=ok`。保护目录 `/opt/vm2api-primary/pre-14028fp1-20261030T015247Z` 内 `data-vms-config.tar.gz` SHA256 `69e51c79…b8fc`，另含 runtime env、主控/Nginx systemd unit 与 Nginx conf；旧镜像另打 `vm2api:v1.4.025-fp1-pre-14028`。
-5. 预检发现 vm-01/vm-02 旧 seed policy 显式开启 telemetry，vm-03/vm-04 有历史 sidecar 进程残留。已通过面板把四槽 seed/worker 配置全关并停止旧 sidecar；vm-01 远端 worker 配确认为 false，四个 VM 的 proxy/node/container 与保护包逐项一致。旧控制面对 vm-01 的远端生效确认请求未返回，但远端配置、进程、容器与 health 均已复核成功。
+5. 预检发现 vm-01/vm-02 旧 seed policy 显式开启 telemetry，vm-03/vm-04 有历史 sidecar 进程残留。已通过面板把四槽 seed/worker 配置全关并停止旧 sidecar；vm-01 远端确认虽耗时较长，但最终 HTTP 200 / `action=stopped`，远端 worker 配置与进程均复核关闭。四个 VM 的 proxy/node/container 与保护包逐项一致。
 
 ## 2026-10-27 部署结论
 
