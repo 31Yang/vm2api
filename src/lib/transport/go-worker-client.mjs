@@ -474,9 +474,25 @@ export function usageFromSseEvent(event) {
   return null
 }
 
-import { semanticStatusForStreamError } from '../protocol/stream-error-status.mjs'
+import { isContextOverflowMessage, semanticStatusForStreamError } from '../protocol/stream-error-status.mjs'
 
-export { semanticStatusForStreamError } from '../protocol/stream-error-status.mjs'
+export { isContextOverflowMessage, semanticStatusForStreamError } from '../protocol/stream-error-status.mjs'
+
+// Fork patch (cli-error-semantics): a context-window rejection also arrives as a generic api_error.
+// Left alone it looks like an empty hop (same-account retries, then a 502 incomplete response), so
+// clients keep resending the oversized prompt and Claude Code never gets to compact.
+// The wrap CLI turns an upstream stop_reason=max_tokens into this error.
+const OUTPUT_CAP_TEXT = /exceeded the (\d+) output token maximum/i
+
+/** Upstream 400 shape; keeps the lowercase phrase Claude Code looks for before compacting. */
+function contextOverflowBody(body, message) {
+  const text = /prompt is too long/.test(message) ? message : `prompt is too long: ${message}`
+  return { type: 'error', error: { ...(body?.error || {}), type: 'invalid_request_error', message: text } }
+}
+
+function streamErrorMessage(event) {
+  return String(event?.error?.message || event?.message || '')
+}
 
 function nativeErrorStatus(handoff, body) {
   const facts = handoff?.providerResult
@@ -498,6 +514,10 @@ export function restoreKernelErrorStatus(result = {}, { now = Date.now() } = {})
   const body = result.body
   if (!(body?.type === 'error' || body?.error)) return result
   const status = semanticStatusForStreamError(body)
+  const message = streamErrorMessage(body)
+  if (status === 400 && isContextOverflowMessage(message)) {
+    return { ...result, status: 400, body: contextOverflowBody(body, message), terminalState: 'rejected' }
+  }
   if (status !== 403 && status !== 429 && status !== 503 && status !== 529) return result
   const headers =
     status === 429
@@ -535,6 +555,15 @@ export function restoreUncommittedHop(result = {}, { now = Date.now() } = {}) {
     const status = semanticStatusForStreamError(body)
     const message = String(body?.error?.message || body?.message || '')
     const code = String(body?.error?.code || '')
+    if (status === 400 && isContextOverflowMessage(message)) {
+      return {
+        ...result,
+        status,
+        body: contextOverflowBody(body, message),
+        terminalState: 'rejected',
+        streamError: true,
+      }
+    }
     if (code && code !== 'empty_response') {
       const retryAfter = body?.error?.retry_after
       const coded = retryAfter ? { ...(result.headers || {}), 'retry-after': String(retryAfter) } : result.headers
@@ -608,6 +637,21 @@ function gateCragBody(body, print, health, isolated = false, dropSampling = fals
   return out
 }
 
+function alignExplicitSamplingForThinking(original, body) {
+  const type = String(body?.thinking?.type || '').toLowerCase()
+  if (type !== 'enabled' && type !== 'adaptive') return body
+  const hasTemperature = Object.prototype.hasOwnProperty.call(original, 'temperature')
+  const hasTopP = Object.prototype.hasOwnProperty.call(original, 'top_p')
+  const hasTopK = Object.prototype.hasOwnProperty.call(original, 'top_k')
+  if (!hasTemperature && !hasTopP && !hasTopK) return body
+
+  const out = { ...body }
+  if (hasTemperature) out.temperature = 1
+  delete out.top_p
+  delete out.top_k
+  return out
+}
+
 /**
  * `cliHop`: the slot cli-node builds the wire and always sends
  * mid-conversation-system; the kernel drops these envelope headers. Gating the
@@ -670,9 +714,16 @@ export function prepareWorkerPayload({
     else if (!officialBetas) gated = { ...main, betas: thread.betas }
   }
   const directed = gateCragBody(gated, print, health, requestContext?.purpose === 'auto_mode_classifier', dropSampling)
+  // Fork patch (sampling-align): official print thinking is injected above, after the
+  // early sampling aligner. Normalize only an explicit caller sampling field, and never
+  // the CRAG print path (native gateCragBody aligns it itself). With v1.4.188's
+  // sampling_repairable retry the caller-side strip already happened upstream in
+  // prepareAnthropicRequest, so this reads a sampling-free body and no-ops; if sampling
+  // is still present it normalizes to the API-default 1, which stays retry-legal.
+  const sampled = print ? directed : alignExplicitSamplingForThinking(body, directed)
   return {
     headers,
-    gated: directed,
+    gated: sampled,
     cliHop,
     routing,
     acceptsCallerCwd: print && Array.isArray(health?.capabilities) && health.capabilities.includes('caller_cwd'),
@@ -1407,6 +1458,7 @@ async function streamGoWorkerRaw({
     let responsesTerminal = null
     const assembler = createClaudeMessageAssembler()
     const pendingLines = []
+    const openBlocks = new Set()
     const takeSseEvent = () => {
       try {
         const event = JSON.parse(dataBuf)
@@ -1469,6 +1521,9 @@ async function streamGoWorkerRaw({
         stopCancel()
       }
       if (event.type === 'message_start') rememberThreadTurn(event.message?.id, prepared.thread)
+      if (event.type === 'message_start') openBlocks.clear()
+      if (event.type === 'content_block_start' && Number.isInteger(event.index)) openBlocks.add(event.index)
+      if (event.type === 'content_block_stop' && Number.isInteger(event.index)) openBlocks.delete(event.index)
       const evUsage = usageFromSseEvent(event)
       if (evUsage) sseUsage = mergeUsage(sseUsage, evUsage)
       if (event.message?.model) sseModel = event.message.model
@@ -1502,6 +1557,79 @@ async function streamGoWorkerRaw({
         )
       }, 1000)
       idleTimer.unref?.()
+    }
+    const handleLine = async (line) => {
+      applyClaudeSSELineToMessage(line, assembler)
+      if (line.startsWith('data:')) {
+        const piece = line.slice(5).trim()
+        if (piece && piece !== '[DONE]') {
+          dataBuf = dataBuf ? `${dataBuf}\n${piece}` : piece
+          const event = observeSseEvent(takeSseEvent())
+          line = publicSseLine(line, event)
+          if (shouldCommit(event)) await flushCommit()
+        }
+      } else if (line === '') {
+        if (dataBuf) {
+          const event = takeSseEvent()
+          dataBuf = ''
+          observeSseEvent(event)
+          if (shouldCommit(event)) await flushCommit()
+        }
+      } else if (dataBuf && !line.startsWith('event:') && !line.startsWith(':')) {
+        dataBuf = `${dataBuf}\n${line}`
+        const event = observeSseEvent(takeSseEvent())
+        if (shouldCommit(event)) await flushCommit()
+      }
+      await emitLine(line)
+    }
+    // Fork patch (cli-error-semantics): upstream answers a max_tokens hit with 200 and stop_reason
+    // max_tokens, but the wrap CLI replaces it with a fatal output-token-maximum error. Clients saw
+    // that as 502 and resent unchanged. Hold each cli-hop event line until its data decides, swallow
+    // that error, and close the message the way the upstream did.
+    let heldEventLine = null
+    let outputCapClosed = false
+    const injectSseEvent = async (event) => {
+      await handleLine(`event: ${event.type}`)
+      await handleLine(`data: ${JSON.stringify(event)}`)
+      await handleLine('')
+    }
+    const closeAtOutputCap = async (errorEvent) => {
+      outputCapClosed = true
+      if (sawMessageStop) return
+      for (const index of [...openBlocks].sort((a, b) => a - b)) {
+        await injectSseEvent({ type: 'content_block_stop', index })
+      }
+      const cap = Number(OUTPUT_CAP_TEXT.exec(streamErrorMessage(errorEvent))?.[1])
+      await injectSseEvent({
+        type: 'message_delta',
+        delta: { stop_reason: 'max_tokens', stop_sequence: null },
+        ...(cap > 0 ? { usage: { output_tokens: cap } } : {}),
+      })
+      await injectSseEvent({ type: 'message_stop' })
+    }
+    const passLine = async (line) => {
+      if (!cliHop) return handleLine(line)
+      if (line.startsWith('event:')) {
+        if (heldEventLine != null) await handleLine(heldEventLine)
+        heldEventLine = line
+        return
+      }
+      const held = heldEventLine
+      heldEventLine = null
+      if (line.startsWith('data:')) {
+        let event = null
+        try {
+          event = JSON.parse(line.slice(5).trim())
+        } catch {}
+        const type = event && typeof event === 'object' ? String(event.type || '') : ''
+        // Terminal events the kernel may still send after the swallowed error would close twice.
+        if (outputCapClosed && (type === 'error' || type === 'message_delta' || type === 'message_stop')) return
+        if (!outputCapClosed && type === 'error' && OUTPUT_CAP_TEXT.test(streamErrorMessage(event))) {
+          return closeAtOutputCap(event)
+        }
+      }
+      if (held != null) await handleLine(held)
+      return handleLine(line)
     }
     try {
       // message_stop is the protocol terminal event, but the kernel still sends
@@ -1549,32 +1677,17 @@ async function streamGoWorkerRaw({
             sawChunk = true
             lastChunkAt = Date.now()
           }
-          applyClaudeSSELineToMessage(line, assembler)
-          if (line.startsWith('data:')) {
-            const piece = line.slice(5).trim()
-            if (piece && piece !== '[DONE]') {
-              dataBuf = dataBuf ? `${dataBuf}\n${piece}` : piece
-              const event = observeSseEvent(takeSseEvent())
-              line = publicSseLine(line, event)
-              if (shouldCommit(event)) await flushCommit()
-            }
-          } else if (line === '') {
-            if (dataBuf) {
-              const event = takeSseEvent()
-              dataBuf = ''
-              observeSseEvent(event)
-              if (shouldCommit(event)) await flushCommit()
-            }
-          } else if (dataBuf && !line.startsWith('event:') && !line.startsWith(':')) {
-            dataBuf = `${dataBuf}\n${line}`
-            const event = observeSseEvent(takeSseEvent())
-            if (shouldCommit(event)) await flushCommit()
-          }
-          await emitLine(line)
+          await passLine(line)
         }
         if (sawChunk && !outboundHeadersFrame && buffer) lastChunkAt = Date.now()
       }
       stopCancel()
+      // Fork patch (output-cap hold): a truncated cli-hop stream can end with an
+      // event header still held; flush it so the message closes like upstream did.
+      if (heldEventLine != null) {
+        await handleLine(heldEventLine)
+        heldEventLine = null
+      }
       if (buffer && !outboundHeadersFrame) {
         applyClaudeSSELineToMessage(buffer, assembler)
         if (buffer.startsWith('data:')) {

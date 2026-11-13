@@ -46,7 +46,10 @@ export function decisionOrigin(policy = {}) {
     policy.reason === 'client_cancelled'
   )
     return 'client'
-  if (policy.reason === 'pool_wait_queue_full' || (policy.scope === 'worker' && policy.reason === 'slot_busy')) {
+  if (
+    policy.reason === 'pool_wait_queue_full' ||
+    (policy.scope === 'worker' && (policy.reason === 'slot_busy' || policy.reason === 'local_capacity'))
+  ) {
     return 'local'
   }
   if (policy.scope === 'proxy' || policy.reason === 'worker_transport_failure' || policy.reason === 'worker_timeout') {

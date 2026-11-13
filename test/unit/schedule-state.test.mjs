@@ -59,6 +59,7 @@ test('risk-audit and request-level codes never change the slot state', () => {
     'worker_transport_failure',
     'worker_timeout',
     'slot_busy',
+    'local_capacity',
     'concurrency_limit',
     'model_cooldown',
   ]

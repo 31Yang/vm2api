@@ -14,6 +14,7 @@ import {
   restoreKernelErrorStatus,
   restoreUncommittedHop,
   semanticStatusForStreamError,
+  isContextOverflowMessage,
 } from '../../src/lib/transport/go-worker-client.mjs'
 import { prepareCliHopBody } from '../../src/lib/protocol/outbound-attempt.mjs'
 import { callerAutoCompactWindow, defaultSeedPolicy, sanitizeInboundBody } from '../../src/lib/protocol/seed-policy.mjs'
@@ -387,6 +388,118 @@ test('cli-hop appends inline-tools when a message carries a tool_definition', ()
     cliHop: true,
   })
   assert.ok(!plain.body.betas.includes('inline-tools-2026-09-15'))
+})
+
+test('official print thinking aligns only explicit caller sampling', () => {
+  const exec = { homeDir: '', vm: { claude: { mode: 'setup-token', scope: 'user:inference' } } }
+  for (const temperature of [0.1, 0.2, 0.5, 1]) {
+    const input = {
+      model: 'claude-sonnet-5-5',
+      max_tokens: 1024,
+      temperature,
+      top_p: 0.9,
+      top_k: 40,
+      messages: [{ role: 'user', content: 'hi' }],
+    }
+    const before = structuredClone(input)
+    const out = finalizeWorkerPayload({
+      body: input,
+      reqHeaders: {},
+      exec,
+      identity: null,
+      cliHop: true,
+    })
+    assert.deepEqual(out.body.thinking, { type: 'adaptive', display: 'updates' })
+    assert.ok(out.body.betas.includes('thinking-display-updates-2026-08-18'))
+    assert.equal(out.body.temperature, 1)
+    assert.equal(Object.hasOwn(out.body, 'top_p'), false)
+    assert.equal(Object.hasOwn(out.body, 'top_k'), false)
+    assert.deepEqual(input, before)
+  }
+
+  const absent = {
+    model: 'claude-sonnet-5-5',
+    max_tokens: 1024,
+    messages: [{ role: 'user', content: 'hi' }],
+  }
+  const absentOut = finalizeWorkerPayload({
+    body: absent,
+    reqHeaders: {},
+    exec,
+    identity: null,
+    cliHop: true,
+  })
+  assert.deepEqual(absentOut.body.thinking, { type: 'adaptive', display: 'updates' })
+  assert.ok(absentOut.body.betas.includes('thinking-display-updates-2026-08-18'))
+  assert.equal(Object.hasOwn(absentOut.body, 'temperature'), false)
+
+  const cragExec = {
+    homeDir: '',
+    vm: { dataplane: 'crag', crag_kernel_version: 'v2', claude: { mode: 'setup-token', scope: 'user:inference' } },
+    workerStatus: { runtime_variant: 'crag-v2', capabilities: ['linux_tui_pty'] },
+  }
+  const crag = finalizeWorkerPayload({
+    body: { ...absent, temperature: 0.2 },
+    reqHeaders: {},
+    exec: cragExec,
+    identity: null,
+  })
+  // Upstream >=1.4.136 (gateCragBody) natively aligns sampling on the CRAG print
+  // path, so an explicit caller temperature no longer survives there either.
+  assert.equal(crag.body.temperature, 1)
+  assert.equal(typeof crag.body.crag_model, 'object')
+
+  const stalePrint = finalizeWorkerPayload({
+    body: { ...absent, temperature: 0.2 },
+    reqHeaders: {},
+    exec,
+    identity: null,
+    cragPrint: true,
+  })
+  assert.equal(stalePrint.body.temperature, 1)
+  assert.equal(stalePrint.body.crag_model, undefined)
+
+  // Upstream >=1.4.188 (sampling_repairable retry) strips sampling earlier, in
+  // prepareAnthropicRequest, so this stage normally sees a sampling-free body. If
+  // sampling is still present on that path the fork aligner must land on the
+  // API-default 1 and drop top_p/top_k, never on the caller's raw values.
+  const dropped = finalizeWorkerPayload({
+    body: { ...absent, temperature: 0.4, top_p: 0.9 },
+    reqHeaders: {},
+    exec,
+    identity: null,
+    cliHop: true,
+    dropSampling: true,
+  })
+  assert.equal(dropped.body.temperature, 1)
+  assert.equal(dropped.body.top_p, undefined)
+
+  const betweenTools = {
+    ...absent,
+    temperature: 0.2,
+    thinking: { type: 'between_tools' },
+  }
+  const betweenToolsOut = finalizeWorkerPayload({
+    body: betweenTools,
+    reqHeaders: {},
+    exec,
+    identity: null,
+    cliHop: true,
+  })
+  assert.equal(betweenToolsOut.body.temperature, 0.2)
+  assert.deepEqual(betweenToolsOut.body.thinking, { type: 'between_tools' })
+
+  const repaired = { ...absent, temperature: 0.2 }
+  const repairedOut = finalizeWorkerPayload({
+    body: repaired,
+    reqHeaders: {},
+    exec,
+    identity: null,
+    cliHop: true,
+    repaired: true,
+  })
+  assert.equal(Object.hasOwn(repairedOut.body, 'thinking'), false)
+  assert.equal(repairedOut.body.temperature, 0.2)
 })
 
 test('CRAG v2 receives the preset model boundary only from a worker that consumes it', () => {
@@ -2393,6 +2506,243 @@ unixTest('streamGoWorker and callGoWorker do not post cancel after terminal mess
     assert.equal(jsonResult.body.stop_reason, 'tool_use')
     await new Promise((resolve) => setTimeout(resolve, 30))
     assert.deepEqual(cancels, [])
+  } finally {
+    await fx.close()
+  }
+})
+
+// ---- Fork patch (cli-error-semantics) ----
+
+const CAP_ERROR =
+  "provider error: provider error: API Error: Claude's response exceeded the 64000 output token maximum. To configure this behavior, set the CLAUDE_CODE_MAX_OUTPUT_TOKENS environment variable."
+
+function sseLines(lines) {
+  return lines.filter((line) => line.startsWith('event:') || line.startsWith('data:'))
+}
+
+function capErrorData() {
+  return `data: ${JSON.stringify({ type: 'error', error: { type: 'api_error', message: CAP_ERROR } })}\n\n`
+}
+
+test('fork patch cli-error-semantics: context-window rejections map to 400, the output cap does not', () => {
+  for (const message of [
+    'provider error: provider error: Prompt is too long',
+    'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 1250000 tokens > 1000000 maximum"}}',
+    'input length and `max_tokens` exceed context limit: 198000 + 64000 > 200000',
+  ]) {
+    assert.equal(isContextOverflowMessage(message), true, message)
+    assert.equal(semanticStatusForStreamError({ type: 'error', error: { type: 'api_error', message } }), 400, message)
+  }
+  assert.equal(isContextOverflowMessage(CAP_ERROR), false)
+  assert.equal(semanticStatusForStreamError({ type: 'error', error: { type: 'api_error', message: CAP_ERROR } }), 502)
+  assert.equal(
+    semanticStatusForStreamError({ type: 'error', error: { type: 'api_error', message: 'provider error' } }),
+    502,
+  )
+})
+
+test('fork patch cli-error-semantics: an uncommitted context-window rejection becomes a 400, not an empty hop', () => {
+  const restored = restoreUncommittedHop({
+    ok: false,
+    status: 200,
+    committed: false,
+    terminalState: 'incomplete',
+    body: {
+      type: 'error',
+      error: { type: 'api_error', message: 'provider error: provider error: Prompt is too long' },
+    },
+  })
+  assert.equal(restored.status, 400)
+  assert.equal(restored.terminalState, 'rejected')
+  assert.equal(restored.streamError, true)
+  assert.equal(restored.body.error.type, 'invalid_request_error')
+  assert.notEqual(restored.body.error.code, 'empty_response')
+  assert.match(restored.body.error.message, /prompt is too long/)
+
+  const kernel = restoreKernelErrorStatus({
+    ok: false,
+    status: 502,
+    body: {
+      type: 'error',
+      error: {
+        type: 'api_error',
+        code: 'provider_error',
+        message: 'provider error: prompt is too long: 1250000 tokens > 1000000 maximum',
+      },
+    },
+  })
+  assert.equal(kernel.status, 400)
+  assert.equal(kernel.terminalState, 'rejected')
+  assert.match(kernel.body.error.message, /^provider error: prompt is too long/)
+})
+
+unixTest(
+  'fork patch cli-error-semantics: cli-hop turns the wrap CLI output-cap error into stop_reason max_tokens',
+  async () => {
+    const fx = await fixture((req, res) => {
+      res.setHeader('content-type', 'text/event-stream')
+      res.write(
+        'event: message_start\ndata: {"type":"message_start","message":{"role":"assistant","content":[],"usage":{"input_tokens":3,"output_tokens":1}}}\n\n',
+      )
+      res.write(
+        'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+      )
+      res.write(
+        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial answer"}}\n\n',
+      )
+      res.write(`event: error\n${capErrorData()}`)
+      res.end()
+    })
+    try {
+      const lines = []
+      const result = await streamGoWorker({
+        exec: fx.exec,
+        cliHop: true,
+        body: { model: 'claude-opus-5-5', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+        onEvent: (line) => lines.push(line),
+      })
+      assert.equal(result.ok, true)
+      assert.equal(result.terminalState, 'verified')
+      assert.equal(result.stopReason, 'max_tokens')
+      assert.equal(result.body.stop_reason, 'max_tokens')
+      assert.equal(result.body.content[0].text, 'partial answer')
+      assert.equal(result.usage.output_tokens, 64000)
+      const sse = sseLines(lines)
+      assert.ok(!sse.some((line) => line === 'event: error' || line.includes('"type":"error"')))
+      assert.equal(sse.filter((line) => line === 'event: message_stop').length, 1)
+      assert.ok(sse.some((line) => line.startsWith('data:') && line.includes('"stop_reason":"max_tokens"')))
+      // Lines reach the client in order: the delta before the synthetic close.
+      assert.ok(lines.indexOf('event: content_block_delta') < lines.indexOf('event: message_delta'))
+    } finally {
+      await fx.close()
+    }
+  },
+)
+
+unixTest('fork patch cli-error-semantics: an open tool_use is closed before the synthetic stop', async () => {
+  const fx = await fixture((req, res) => {
+    res.setHeader('content-type', 'text/event-stream')
+    res.write('data: {"type":"message_start","message":{"role":"assistant","content":[]}}\n\n')
+    res.write(
+      'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"Write","input":{}}}\n\n',
+    )
+    const partial = JSON.stringify({
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'input_json_delta', partial_json: '{"file_path":"index.html","content":"<html' },
+    })
+    res.write(`data: ${partial}\n\n`)
+    res.write(capErrorData())
+    res.end()
+  })
+  try {
+    const lines = []
+    const result = await streamGoWorker({
+      exec: fx.exec,
+      cliHop: true,
+      body: { model: 'claude-opus-5-5', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      onEvent: (line) => lines.push(line),
+    })
+    assert.equal(result.ok, true)
+    assert.equal(result.body.stop_reason, 'max_tokens')
+    const tool = result.body.content[0]
+    assert.equal(tool.type, 'tool_use')
+    assert.deepEqual(tool.input, {})
+    assert.equal(tool._inputJson, undefined)
+    const sse = sseLines(lines)
+    assert.ok(sse.indexOf('event: content_block_stop') >= 0)
+    assert.ok(sse.indexOf('event: content_block_stop') < sse.indexOf('event: message_delta'))
+  } finally {
+    await fx.close()
+  }
+})
+
+unixTest('fork patch cli-error-semantics: no second close when the kernel already sent message_stop', async () => {
+  const fx = await fixture((req, res) => {
+    res.setHeader('content-type', 'text/event-stream')
+    res.write('data: {"type":"message_start","message":{"role":"assistant","content":[]}}\n\n')
+    res.write('data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n')
+    res.write('data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"abc"}}\n\n')
+    res.write('data: {"type":"content_block_stop","index":0}\n\n')
+    res.write('data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":64000}}\n\n')
+    res.write('data: {"type":"message_stop"}\n\n')
+    res.write(`event: error\n${capErrorData()}`)
+    res.write('data: {"type":"message_stop"}\n\n')
+    res.end()
+  })
+  try {
+    const lines = []
+    const result = await streamGoWorker({
+      exec: fx.exec,
+      cliHop: true,
+      body: { model: 'claude-opus-5-5', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      onEvent: (line) => lines.push(line),
+    })
+    assert.equal(result.ok, true)
+    assert.equal(result.body.stop_reason, 'max_tokens')
+    assert.equal(lines.filter((line) => line.includes('"type":"message_stop"')).length, 1)
+    assert.ok(!lines.some((line) => line === 'event: error' || line.includes('"type":"error"')))
+  } finally {
+    await fx.close()
+  }
+})
+
+unixTest('fork patch cli-error-semantics: other errors and non-cli-hop streams keep the current behavior', async () => {
+  const stream = (message) => (req, res) => {
+    res.setHeader('content-type', 'text/event-stream')
+    res.write('data: {"type":"message_start","message":{"role":"assistant","content":[]}}\n\n')
+    res.write('data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n')
+    res.write('data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"abc"}}\n\n')
+    res.write(`event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: 'api_error', message } })}\n\n`)
+    res.end()
+  }
+  for (const [message, cliHop] of [
+    [CAP_ERROR, false],
+    ['provider error: provider error: stream incomplete', true],
+  ]) {
+    const fx = await fixture(stream(message))
+    try {
+      const lines = []
+      const result = await streamGoWorker({
+        exec: fx.exec,
+        cliHop,
+        body: { model: 'claude-opus-5-5', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+        onEvent: (line) => lines.push(line),
+      })
+      assert.equal(result.ok, false, message)
+      assert.equal(result.committed, true)
+      assert.equal(result.terminalState, 'incomplete')
+      assert.match(String(result.body?.error?.message || ''), /exceeded|stream incomplete/)
+      assert.ok(lines.includes('event: error'))
+    } finally {
+      await fx.close()
+    }
+  }
+})
+
+unixTest('fork patch cli-error-semantics: a streamed context-window rejection before any output is a 400', async () => {
+  const fx = await fixture((req, res) => {
+    res.setHeader('content-type', 'text/event-stream')
+    res.write('event: message_start\ndata: {"type":"message_start","message":{"content":[]}}\n\n')
+    res.write(
+      'event: error\ndata: {"type":"error","error":{"type":"api_error","message":"provider error: provider error: Prompt is too long"}}\n\n',
+    )
+    res.end()
+  })
+  try {
+    const lines = []
+    const result = await streamGoWorker({
+      exec: fx.exec,
+      cliHop: true,
+      body: { model: 'claude-opus-5-5', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      onEvent: (line) => lines.push(line),
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.committed, false)
+    assert.equal(result.status, 400)
+    assert.equal(result.terminalState, 'rejected')
+    assert.match(result.body.error.message, /prompt is too long/)
+    assert.equal(lines.length, 0)
   } finally {
     await fx.close()
   }

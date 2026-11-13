@@ -62,6 +62,7 @@ import { kvmCragAppArmorCommand } from '../vm/kvm-crag-apparmor.mjs'
 import { clearKvmCragSubscription } from '../vm/kvm-crag-subscription.mjs'
 import { workerPaths } from './go-worker-client.mjs'
 import { effectiveSlotCount } from '../vm/slot-capacity.mjs'
+import { withSlotContainerPrefix } from '../vm/container-name.mjs'
 
 /**
  * The native host is authenticated separately from account scheduling readiness.
@@ -168,9 +169,9 @@ export function kernelBinPath() {
 
 export function slotContainerName(exec = {}) {
   const configured = String(exec?.vm?.runtime?.container || '').trim()
-  if (configured) return configured
+  if (configured) return withSlotContainerPrefix(configured)
   const vmId = exec?.vmId || exec?.vm?.id || ''
-  return vmId ? `kin-${String(vmId).replace(/^vm-/, '')}` : ''
+  return vmId ? withSlotContainerPrefix(`kin-${String(vmId).replace(/^vm-/, '')}`) : ''
 }
 
 export function syncKernelSlotCount(configPath, expected = WRAP_SLOT_MAX, requested) {

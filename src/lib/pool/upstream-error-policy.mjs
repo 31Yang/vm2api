@@ -294,6 +294,12 @@ export function isPreFirstFrameTransportFailure(
   return facts?.schema_version === 2 && facts.provider_complete === false && facts.http_status == null
 }
 
+function isLocalCapacityRefusal(workerCode, message) {
+  const hay = `${workerCode} ${message}`
+  // Kernel admission uses this exact local shape. A bare upstream "overloaded" stays on the provider circuit.
+  return /\bno_capacity\b/i.test(hay) || /runtime overloaded/i.test(hay)
+}
+
 function continueWithoutCooldown({ scope, reason, retrySameAccount = true } = {}) {
   return {
     scope,
@@ -856,6 +862,15 @@ function classifyUpstreamResultRaw(
       /socks|proxy/i.test(combinedHay)
     ) {
       return proxyTransportFailure(now)
+    }
+    // Fork patch (local-capacity): kernel admission refused locally (no_capacity /
+    // runtime overloaded). Not a provider signal: try another unit, open no circuit.
+    if (isLocalCapacityRefusal(workerCode, message)) {
+      return continueWithoutCooldown({
+        scope: 'worker',
+        reason: 'local_capacity',
+        retrySameAccount: false,
+      })
     }
     if (isFableModel(model) && (status === 408 || status === 504 || /timeout/i.test(message))) {
       return {

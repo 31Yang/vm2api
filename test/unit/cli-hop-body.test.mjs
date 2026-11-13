@@ -5,6 +5,8 @@ import {
   prepareOutboundEnvelope,
   stripCliOwnedSystem,
 } from '../../src/lib/protocol/outbound-attempt.mjs'
+import { modelSupportsMidConversationSystem } from '../../src/lib/protocol/anthropic-policy.mjs'
+import { applyMinMaxTokens } from '../../src/lib/protocol/min-max-tokens.mjs'
 import {
   applyCrsUnofficialPersona,
   CRS_OFFICIAL_SYSTEM,
@@ -111,6 +113,34 @@ test('cli-hop normalizes mixed caller markers to the official template', () => {
   assert.equal(body.messages[0].content[0].cache_control, undefined)
   assert.equal(body.messages[1].content[0].cache_control, undefined)
   assert.deepEqual(body.messages[2].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
+})
+
+test('fork patch official-full markers: shaped system stays intact and users still get breakpoints', () => {
+  const system = [
+    { type: 'text', text: '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__', cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: 'CALLER SYSTEM' },
+  ]
+  const body = prepareCliHopBody(
+    {
+      model: 'claude-haiku-4-5',
+      max_tokens: 128,
+      system,
+      messages: [
+        { role: 'user', content: 'u1' },
+        { role: 'assistant', content: 'a1' },
+        { role: 'user', content: 'u2' },
+        { role: 'assistant', content: 'a2' },
+        { role: 'user', content: 'u3' },
+      ],
+    },
+    { cacheTtl: '1h' },
+  )
+  assert.deepEqual(body.system, system)
+  assert.deepEqual(
+    body.messages.map((message) => message.content[0].cache_control || null),
+    // Upstream shortens fallback anchors to 5m when an existing marker has no TTL.
+    [null, null, { type: 'ephemeral', ttl: '5m' }, null, { type: 'ephemeral', ttl: '5m' }],
+  )
 })
 
 test('caller environment stays behind the official identity', () => {
@@ -559,7 +589,176 @@ test('a later budget drop leaves a mixed system-reminder wrapper intact', () => 
   assert.doesNotMatch(joined, /<total_tokens>1 tokens left<\/total_tokens>/)
 })
 
-test('cli-hop leaves Opus model policy for cli-node', () => {
+test('prepareCliHopBody preserves explicit small max_tokens for upstream policy', () => {
+  const probe1 = prepareCliHopBody({
+    model: 'claude-haiku-4-5',
+    max_tokens: 1,
+    messages: [{ role: 'user', content: '.' }],
+  })
+  assert.equal(probe1.max_tokens, 1)
+
+  const probe32 = prepareCliHopBody({
+    model: 'claude-haiku-4-5',
+    max_tokens: 32,
+    messages: [{ role: 'user', content: 'ping' }],
+  })
+  assert.equal(probe32.max_tokens, 32)
+
+  // v1.3.209 no longer fills thinking on an ordinary body; the plain floor applies.
+  const classifier64 = prepareCliHopBody({
+    model: 'claude-sonnet-5',
+    max_tokens: 64,
+    messages: [{ role: 'user', content: '<severity>0</severity>' }],
+  })
+  assert.equal(classifier64.max_tokens, 64)
+  assert.equal(classifier64.thinking, undefined)
+
+  const normal = prepareCliHopBody({
+    model: 'claude-haiku-4-5',
+    max_tokens: 4096,
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(normal.max_tokens, 4096)
+})
+
+test('entry min_max_tokens floor survives cli-hop preparation', () => {
+  // Claude Code auto-mode permission classifier as relayed through NewAPI (OpenAI chat -> Messages).
+  const inbound = applyMinMaxTokens(
+    {
+      model: 'claude-sonnet-5',
+      max_tokens: 64,
+      stop_sequences: ['</severity>'],
+      system: 'You are a security classifier.',
+      messages: [{ role: 'user', content: '<transcript>...</transcript>' }],
+    },
+    { enabled: true, value: 128 },
+  )
+  assert.equal(inbound.max_tokens, 128)
+  const body = prepareCliHopBody(inbound)
+  assert.equal(body.thinking, undefined)
+  assert.equal(body.max_tokens, 128)
+
+  // Thinking-aware headroom belongs to the upstream min/max policy before cli-hop assembly.
+  const thinking = prepareCliHopBody({
+    model: 'claude-sonnet-5',
+    max_tokens: 128,
+    thinking: { type: 'enabled', budget_tokens: 64 },
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+  assert.equal(thinking.max_tokens, 128)
+
+  // Native cli-node owns model policy; absent caller thinking remains absent.
+  const haiku = prepareCliHopBody(
+    applyMinMaxTokens({ model: 'claude-haiku-4-5', max_tokens: 64, messages: [{ role: 'user', content: 'hi' }] }),
+  )
+  assert.equal(haiku.thinking, undefined)
+  assert.equal(haiku.max_tokens, 128)
+
+  const haiku500 = prepareCliHopBody({
+    model: 'claude-haiku-4-5',
+    max_tokens: 500,
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+  assert.equal(haiku500.max_tokens, 500)
+})
+
+test('caller-disabled thinking and large budgets stay caller-owned', () => {
+  const disabled = prepareCliHopBody({
+    model: 'claude-sonnet-5',
+    max_tokens: 256,
+    thinking: { type: 'disabled' },
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+  assert.equal(disabled.thinking.type, 'disabled')
+  assert.equal(disabled.max_tokens, 256)
+
+  const large = prepareCliHopBody({
+    model: 'claude-opus-5-5',
+    max_tokens: 64000,
+    messages: [{ role: 'user', content: 'hi' }],
+  })
+  assert.equal(large.max_tokens, 64000)
+
+  // The model catalog owns missing-budget defaults (Sonnet 5 is 64000 since v1.4.043).
+  const missing = prepareCliHopBody({ model: 'claude-sonnet-5', messages: [{ role: 'user', content: 'hi' }] })
+  assert.equal(missing.max_tokens, 64000)
+})
+
+test('fork patch mid-system-models: Sonnet 4.6 lifts role=system turns like Haiku', () => {
+  // Claude Code session-title request: caller leftover system becomes a trailing role=system turn.
+  const body = prepareCliHopBody({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 32000,
+    messages: [
+      { role: 'user', content: '<session>fix the ui</session> Write the title.' },
+      { role: 'system', content: '<system-reminder>\nMANDATORY constraints for this turn.\n</system-reminder>' },
+    ],
+  })
+  assert.ok(body.messages.every((message) => message.role !== 'system'))
+  assert.match(body.system.at(-1).text, /MANDATORY constraints/)
+})
+
+test('fork patch mid-system-models: supported models keep role=system turns in place', () => {
+  for (const model of [
+    'claude-opus-5',
+    'claude-opus-5-5',
+    'claude-opus-4-8',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+  ]) {
+    const body = prepareCliHopBody({
+      model,
+      max_tokens: 64000,
+      messages: [
+        { role: 'user', content: 'u1' },
+        { role: 'system', content: 'reminder' },
+      ],
+    })
+    assert.equal(body.messages.at(-1).role, 'system', model)
+  }
+})
+
+test('fork patch mid-system-models: modelSupportsMidConversationSystem model table', () => {
+  // Expectations track the upstream implementation (v1.3.135, #324): the docs-listed models accept
+  // a mid-conversation role=system turn — Fable 5/5.1, Mythos 5/5.1, Opus 5/5.5/4.8, Sonnet 5.5,
+  // Haiku 5.5. Sonnet 5, Haiku 5 and Claude 4.x others lift it into top-level system instead.
+  const unsupported = [
+    'claude-haiku-4-5',
+    'claude-haiku-4-5-20251001',
+    'claude-haiku-5',
+    'claude-sonnet-4-6',
+    'claude-sonnet-4-5-20250929',
+    'claude-sonnet-4-20250514',
+    'claude-sonnet-5',
+    'claude-sonnet-5-fast',
+    'claude-sonnet-5[1m]',
+    'claude-opus-4-6',
+    'claude-opus-4-7',
+    'claude-opus-4-1-20250805',
+    'claude-3-7-sonnet-20250219',
+    'claude-mythos-preview',
+    'CLAUDE-SONNET-4-6',
+  ]
+  const supported = [
+    'claude-fable-5',
+    'claude-fable-5-1',
+    'claude-fable-5.1[1m]',
+    'claude-mythos-5',
+    'claude-mythos-5-1',
+    'claude-opus-5',
+    'claude-opus-5-5',
+    'claude-opus-5.5',
+    'claude-opus-5-5-20251001',
+    'claude-opus-4-8',
+    'claude-sonnet-5-5',
+    'claude-sonnet-5.5',
+    'claude-haiku-5-5',
+  ]
+  for (const model of unsupported) assert.equal(modelSupportsMidConversationSystem(model), false, model)
+  for (const model of supported) assert.equal(modelSupportsMidConversationSystem(model), true, model)
+})
+
+test('cli-hop makes Opus 5.5 acceptable to Claude Code 2.1.280', () => {
   const body = prepareCliHopBody({
     model: 'claude-opus-5.5',
     thinking: { type: 'enabled', budget_tokens: 8000, display: 'summarized' },

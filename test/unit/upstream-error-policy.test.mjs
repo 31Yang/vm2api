@@ -354,6 +354,38 @@ test('slot_busy 503 does not park the account', () => {
   assert.equal(policy.retrySameAccount, false)
 })
 
+test('local kernel capacity refusal does not open the provider circuit', () => {
+  const local = classifyUpstreamResult(
+    {
+      status: 503,
+      body: {
+        type: 'error',
+        error: { type: 'worker_error', message: 'no_capacity: runtime overloaded' },
+      },
+    },
+    { now: 1000 },
+  )
+  assert.equal(local.action, 'continue')
+  assert.equal(local.scope, 'worker')
+  assert.equal(local.reason, 'local_capacity')
+  assert.equal(local.cooldownUntil, null)
+  assert.equal(local.circuit, undefined)
+  assert.equal(local.retrySameAccount, false)
+  assert.equal(local.decision.origin, 'local')
+  assert.equal(local.decision.scope, 'worker')
+
+  const upstream = classifyUpstreamResult(
+    {
+      status: 503,
+      body: { error: { type: 'overloaded_error', message: 'Overloaded' } },
+    },
+    { now: 1000 },
+  )
+  assert.equal(upstream.reason, 'provider_overloaded')
+  assert.equal(upstream.circuit, true)
+  assert.equal(upstream.decision.scope, 'unit')
+})
+
 test('a 502 plan-limit message switches accounts until the reset named in the text', () => {
   const now = Date.parse('2026-09-23T12:37:10Z')
   const policy = classifyUpstreamResult(

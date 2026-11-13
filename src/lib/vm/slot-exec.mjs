@@ -4,14 +4,15 @@
  * SSHes into the guest instead of execing PID1's namespace.
  */
 import { isKvmRuntime } from './runtime-kind.mjs'
+import { withSlotContainerPrefix } from './container-name.mjs'
 
 export const KVM_GUEST_EXEC = '/usr/local/bin/kin-guest-exec'
 
 export function slotExecContainer(vm) {
   const configured = String(vm?.runtime?.container || '').trim()
-  if (configured) return configured
+  if (configured) return withSlotContainerPrefix(configured)
   const id = String(vm?.id || vm?.vmId || '').trim()
-  return id ? `kin-${id.replace(/^vm-/, '')}` : ''
+  return id ? withSlotContainerPrefix(`kin-${id.replace(/^vm-/, '')}`) : ''
 }
 
 function envPairs(env) {

@@ -68,6 +68,7 @@ import { ensureKvmMachineRecord, kvmContainerEnvIncomplete, kvmMachineFields } f
 import { probeLocalKvm } from './kvm-host.mjs'
 import { slotExecArgv } from './slot-exec.mjs'
 import { isDockerInspectNotFound } from './docker-container.mjs'
+import { namespacedContainerName } from './container-name.mjs'
 import { kernelCpuCommand, usesKernelCpuLimit } from './kernel-cpu.mjs'
 import { kvmCragAppArmorCommand } from './kvm-crag-apparmor.mjs'
 import { publishKvmCragLicense } from './kvm-crag-license.mjs'
@@ -233,7 +234,7 @@ function sh(argv, opts = {}) {
 }
 
 export function containerName(vmId) {
-  return `kin-${String(vmId || '').replace(/^vm-/, '')}`
+  return namespacedContainerName(vmId)
 }
 
 /** Remove a stopped slot container so the next boot is created under a new id. */
